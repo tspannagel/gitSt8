@@ -7,6 +7,7 @@ import { layout } from './graph';
 import { readBisect } from './bisect';
 import { Integrations, IntegrationState } from './integration';
 import { ProviderId } from './providers/types';
+import { buildCommitPrompt, cleanModelOutput } from './commitPrompt';
 import type { API, Repository } from './types/git';
 
 const PAGE = 400;
@@ -571,6 +572,7 @@ export class RepoPanel {
 
   on_ready() {
     this.resolveReady();
+    this.on_aiCheck();
     this.scheduleRefresh(0);
   }
   on_refresh() {
@@ -1564,6 +1566,88 @@ export class RepoPanel {
   /** Ends the bisect and returns to the branch it started from. */
   async on_bisectReset() {
     await this.runOp('Reset bisect', () => this.git().run(['bisect', 'reset']));
+  }
+
+  // ---------------------------------------------------------------- generate commit message
+
+  private aiCts?: vscode.CancellationTokenSource;
+  private aiAvailable?: boolean; // cached; null/undefined = not checked yet
+  private aiWatching = false;
+
+  /** Picks a chat model: gitst8.ai.modelFamily if set, else the first one (Copilot preferred). */
+  private async pickModel(): Promise<vscode.LanguageModelChat | undefined> {
+    const family = (vscode.workspace.getConfiguration('gitst8').get<string>('ai.modelFamily') || '').trim();
+    const sel = (s: vscode.LanguageModelChatSelector) => vscode.lm.selectChatModels(s);
+    const base = family ? { family } : {};
+    return (await sel({ vendor: 'copilot', ...base }))[0] ?? (await sel(base))[0];
+  }
+
+  /** Tells the webview whether the sparkle button should show. Checked lazily, cached, re-checked when models change. */
+  private async postAiAvailability(recheck = false): Promise<void> {
+    if (!this.aiWatching) {
+      this.aiWatching = true;
+      this.disposables.push(
+        vscode.lm.onDidChangeChatModels(() => this.postAiAvailability(true)),
+        vscode.workspace.onDidChangeConfiguration(e => e.affectsConfiguration('gitst8.ai') && this.postAiAvailability(true))
+      );
+    }
+    const enabled = vscode.workspace.getConfiguration('gitst8').get<boolean>('ai.enabled', true);
+    if (!enabled) this.aiAvailable = false;
+    else if (recheck || this.aiAvailable === undefined) this.aiAvailable = (await vscode.lm.selectChatModels()).length > 0;
+    this.post({ type: 'aiAvailable', available: !!this.aiAvailable });
+  }
+
+  async on_aiCheck() {
+    await this.postAiAvailability().catch(() => this.post({ type: 'aiAvailable', available: false }));
+  }
+
+  async on_cancelCommitMessage() {
+    this.aiCts?.cancel();
+  }
+
+  async on_generateCommitMessage() {
+    this.aiCts?.cancel();
+    const cts = (this.aiCts = new vscode.CancellationTokenSource());
+    const fail = (text: string) => this.post({ type: 'commitMsgError', text });
+    try {
+      const git = this.git();
+      const flags = ['--no-color', '--no-ext-diff'];
+      // Same rule as the commit button: staged changes, else all tracked changes (it stages everything).
+      let args = ['diff', '--cached', ...flags];
+      let diff = await git.run(args);
+      if (!diff.trim()) {
+        args = ['diff', ...flags];
+        diff = await git.run(args);
+      }
+      if (!diff.trim()) return fail('No changes to describe. Stage or modify tracked files first.');
+      const stat = await git.tryRun([...args, '--stat']);
+      const subjects = (await git.tryRun(['log', '-15', '--format=%s'])).split('\n').filter(Boolean);
+      const branch = (await git.tryRun(['rev-parse', '--abbrev-ref', 'HEAD'])).trim();
+      const model = await this.pickModel();
+      if (!model) return fail('No language model is available. Install a language model provider such as GitHub Copilot, sign in, and try again.');
+      const prompt = buildCommitPrompt({ diff, stat, recentSubjects: subjects, branch: branch === 'HEAD' ? '' : branch, maxChars: Math.max(2000, Math.min(60000, model.maxInputTokens * 3)) });
+      const res = await model.sendRequest([vscode.LanguageModelChatMessage.User(prompt)], { justification: 'gitSt8 drafts a commit message from your changes.' }, cts.token);
+      let text = '';
+      for await (const fragment of res.text) {
+        text += fragment;
+        this.post({ type: 'commitMsgChunk', text: fragment });
+      }
+      this.post({ type: 'commitMsgDone', text: cleanModelOutput(text) });
+    } catch (e) {
+      if (cts.token.isCancellationRequested) return this.post({ type: 'commitMsgDone', cancelled: true });
+      if (e instanceof vscode.LanguageModelError) {
+        const why: Record<string, string> = {
+          NoPermissions: 'Permission to use the language model was not granted. Click the button again and allow access.',
+          Blocked: 'The language model blocked this request.',
+          NotFound: 'The language model was not found. Check gitst8.ai.modelFamily.',
+        };
+        return fail(why[e.code] || `Language model error: ${e.message}`);
+      }
+      fail(errText(e));
+    } finally {
+      if (this.aiCts === cts) this.aiCts = undefined;
+      cts.dispose();
+    }
   }
 
   // ---------------------------------------------------------------- html

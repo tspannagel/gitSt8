@@ -529,6 +529,11 @@ button.link.more { margin-bottom: 6px; }
 body:not(.layout-stack) .wip { grid-template-columns: 1fr; }
 .commitbox { display: flex; flex-direction: column; gap: 6px; }
 .commitbox textarea { width: 100%; min-height: 70px; resize: vertical; font-family: var(--vscode-editor-font-family); }
+.commitbox .msgrow { display: flex; gap: 4px; align-items: flex-start; }
+.commitbox .msgrow textarea { flex: 1; min-width: 0; }
+.commitbox .icon-btn { background: transparent; border: 1px solid transparent; color: var(--vscode-foreground); cursor: pointer; padding: 3px 5px; border-radius: 3px; }
+.commitbox .icon-btn:hover { background: var(--vscode-toolbar-hoverBackground); }
+.commitbox .ai-error { color: var(--vscode-errorForeground); }
 .commitbox .opts { display: flex; gap: 12px; flex-wrap: wrap; color: var(--muted); }
 .commitbox .check { display: inline-flex; align-items: center; gap: 4px; }
 .commitbox button.primary { align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; }

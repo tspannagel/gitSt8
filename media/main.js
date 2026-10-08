@@ -24,7 +24,7 @@
     'debug-disconnect': 0xead0, milestone: 0xeb20, server: 0xeb50,
     github: 0xea84, 'azure-devops': 0xebe8, 'git-pull-request': 0xea64, 'git-pull-request-draft': 0xebdb,
     'pass-filled': 0xebb3, error: 0xea87, 'circle-large-outline': 0xebb5, skip: 0xec6a, 'sign-in': 0xea6f,
-    'debug-rerun': 0xebc0, rocket: 0xeb44,
+    'debug-rerun': 0xebc0, rocket: 0xeb44, sparkle: 0xec10, 'stop-circle': 0xeba5,
   };
   const ic = (name, cls = '') => `<i class="ci ${cls}" aria-hidden="true">${ICONS[name] ? String.fromCharCode(ICONS[name]) : ''}</i>`;
   const fillIcons = (root = document) =>
@@ -130,6 +130,28 @@
         break;
       case 'irebase':
         openRebaseEditor(m);
+        break;
+      case 'aiAvailable':
+        S.aiAvailable = !!m.available;
+        if (S.details?.kind === 'wip') renderDetails();
+        break;
+      case 'commitMsgChunk':
+        if (!S.aiGen) break;
+        S.aiGen.text += m.text;
+        setGeneratedMessage(S.aiGen.text);
+        break;
+      case 'commitMsgDone': {
+        const g = S.aiGen;
+        S.aiGen = null;
+        if (g && !m.cancelled && m.text) setGeneratedMessage(m.text);
+        if (S.details?.kind === 'wip') renderDetails();
+        break;
+      }
+      case 'commitMsgError':
+        S.aiGen = null;
+        S.aiError = m.text;
+        if (S.details?.kind === 'wip') renderDetails();
+        showAiError();
         break;
       case 'busy':
         $('#busy').hidden = !m.busy;
@@ -742,7 +764,11 @@
     el.innerHTML = `<div class="wip">
       <div class="commitbox">
         <div class="d-subject">Commit to ${esc(d.branch || 'detached HEAD')}</div>
-        <textarea id="commitMsg" placeholder="Message (${MOD}+Enter to commit)">${esc(S.commitMsg || '')}</textarea>
+        <div class="msgrow">
+          <textarea id="commitMsg" placeholder="Message (${MOD}+Enter to commit)">${esc(S.commitMsg || '')}</textarea>
+          ${S.aiAvailable || S.aiGen ? `<button class="icon-btn" data-ai="1" title="${S.aiGen ? 'Stop generating' : 'Generate commit message with a language model. Your diff is sent to the model provider (e.g. GitHub Copilot) only when you click this.'}">${ic(S.aiGen ? 'stop-circle' : 'sparkle')}</button>` : ''}
+        </div>
+        <div class="ai-error" id="aiError" hidden></div>
         <div class="opts">
           <label class="check" title="${canAmend ? 'Replace the last commit' : 'No commit yet'}"><input type="checkbox" id="amend" ${S.amend ? 'checked' : ''} ${canAmend ? '' : 'disabled'}> Amend last commit</label>
           <label class="check" title="git commit --no-verify"><input type="checkbox" id="noVerify" ${S.noVerify ? 'checked' : ''}> Skip hooks</label>
@@ -771,6 +797,37 @@
       box.focus();
       S.focusCommit = false;
     }
+  }
+
+  /**
+   * Shows generated text in the commit box (and S.commitMsg, so the draft survives refreshes).
+   * An empty box is replaced; a box with a draft keeps it and gets the generated text below a separator line.
+   */
+  const AI_SEP = '\n\n--- generated ---\n';
+  function setGeneratedMessage(text) {
+    const base = S.aiBase || '';
+    S.commitMsg = base.trim() ? base + AI_SEP + text : text;
+    const ta = $('#commitMsg');
+    if (ta) {
+      ta.value = S.commitMsg;
+      ta.scrollTop = ta.scrollHeight;
+    }
+  }
+
+  function showAiError() {
+    const el = $('#aiError');
+    if (!el) return;
+    el.hidden = !S.aiError;
+    el.textContent = S.aiError || '';
+    S.aiError = null;
+  }
+
+  function toggleGenerate() {
+    if (S.aiGen) return post('cancelCommitMessage');
+    S.aiGen = { text: '', base: S.commitMsg || '' };
+    S.aiBase = S.aiGen.base;
+    post('generateCommitMessage');
+    renderDetails();
   }
 
   function commitNow() {
@@ -1487,6 +1544,7 @@
     if (cmdBtn) return cmdBtn.dataset.cmd === 'openCommit' ? openCommit() : post(cmdBtn.dataset.cmd);
 
     if (t.closest('[data-commit]')) return commitNow();
+    if (t.closest('[data-ai]')) return toggleGenerate();
     const wipBtn = t.closest('[data-wip]');
     if (wipBtn && S.details?.kind === 'wip') {
       const d = S.details;
