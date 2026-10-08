@@ -25,6 +25,7 @@
     github: 0xea84, 'azure-devops': 0xebe8, 'git-pull-request': 0xea64, 'git-pull-request-draft': 0xebdb,
     'pass-filled': 0xebb3, error: 0xea87, 'circle-large-outline': 0xebb5, skip: 0xec6a, 'sign-in': 0xea6f,
     'debug-rerun': 0xebc0, rocket: 0xeb44,
+    'list-flat': 0xeb84,
   };
   const ic = (name, cls = '') => `<i class="ci ${cls}" aria-hidden="true">${ICONS[name] ? String.fromCharCode(ICONS[name]) : ''}</i>`;
   const fillIcons = (root = document) =>
@@ -1043,6 +1044,7 @@
       { label: 'Create worktree here…', icon: 'multiple-windows', run: () => post('addWorktree', { ref: c.hash }) },
       { label: 'Checkout (detached)', icon: 'check', run: () => post('checkout', { kind: 'commit', name: c.hash }) },
       { label: 'Tag…', icon: 'tag', run: () => post('tag', { sha: c.hash }) },
+      { label: 'Create release tag here…', icon: 'rocket', run: () => post('releaseTag', { sha: c.hash }) },
       '-',
       { label: `Merge into ${cur}…`, icon: 'git-merge', run: () => post('merge', { ref: c.hash }) },
       { label: `Rebase ${cur} onto here…`, icon: 'git-commit', run: () => post('rebase', { onto: c.hash }) },
@@ -1124,6 +1126,7 @@
         { label: `Merge into ${cur}…`, icon: 'git-merge', run: () => post('merge', { ref: name }) },
         { label: `Compare with ${cur}`, icon: 'git-compare', run: () => compare(name, 'HEAD') },
         '-',
+        { label: 'Changelog since this tag', icon: 'list-flat', run: () => post('changelog', { from: name, to: 'HEAD' }) },
         { label: 'Push tag', icon: 'repo-push', run: () => post('pushTag', { name }) },
         { label: 'Copy name', icon: 'copy', run: () => post('copy', { text: name }) },
         '-',
@@ -1214,6 +1217,9 @@
         return [
           { label: d.tagSync ? `Re-compare with ${d.tagSync.remote}` : 'Compare with remote…', icon: 'sync', run: () => post('tagSync', d.tagSync ? { remote: d.tagSync.remote } : {}) },
           ...(d.tagSync ? [{ label: 'Hide comparison', icon: 'close', run: () => post('clearTagSync') }] : []),
+          '-',
+          { label: 'Create release tag…', icon: 'rocket', run: () => post('releaseTag', { sha: 'HEAD' }) },
+          { label: 'Generate changelog…', icon: 'list-flat', run: () => post('changelog') },
           '-',
           { label: 'Fetch tags…', icon: 'sync', run: () => post('fetchTags') },
           { label: 'Push all tags…', icon: 'repo-push', run: () => post('pushAllTags') },

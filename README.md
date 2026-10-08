@@ -270,6 +270,13 @@ The current branch, the base branch and branches checked out in other worktrees 
 | Fetch tags | Tags **⋯** → *Fetch tags* |
 | Delete local tags missing on the remote | Tags **⋯** → *Delete local tags missing on remote (prune)*. **Also deletes tags you never pushed.** Compare first |
 
+**Release tags and changelogs.** Right-click a commit → *Create release tag here…*, or Tags **⋯** → *Create release tag…* (tags `HEAD`):
+
+- gitSt8 finds the highest semver tag (`1.2.3`, `v1.2.3`, `release-1.2.3`; prereleases rank below releases) reachable from the commit and reads the commits since then as [Conventional Commits](https://www.conventionalcommits.org). `feat` suggests a minor bump, `fix` and everything else a patch, and a `!` or a `BREAKING CHANGE:` footer a major bump (before 1.0 a breaking change only suggests a minor bump).
+- A quick pick offers the next patch / minor / major version (the suggestion first) or *Custom…*. With no version tag yet it offers `v0.1.0`, `v1.0.0` or custom.
+- The annotated tag's message is the generated changelog (Breaking changes, Features, Fixes, Performance, Other; each line with its short SHA) or just “Release <version>”. Afterwards you can push the tag.
+- Tags **⋯** → *Generate changelog…* (pick a from-tag, then `HEAD` or another tag) and right-click a tag → *Changelog since this tag* open the changelog as an untitled Markdown document. Merge commits are skipped; commits that are not Conventional Commits go under *Other*.
+
 ### Remotes
 
 Remotes **⋯** → **Add remote**. Right-click a remote's name for **Fetch & prune**, **Prune stale remote branches**, **Copy URL**, **Change URL**, **Rename**, **Remove**.

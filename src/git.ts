@@ -562,6 +562,18 @@ export class GitCli {
     }
     return tags;
   }
+
+  /** Tag names reachable from `target` (`git tag --merged`). Tag names cannot contain newlines, so splitting lines is safe. */
+  async tagsMerged(target: string): Promise<string[]> {
+    const out = await this.tryRun(['tag', '--merged', target, '--format=%(refname:short)']);
+    return out.split('\n').map(s => s.trim()).filter(Boolean);
+  }
+
+  /** Non-merge commits in `from..to` (empty `from` = all history up to `to`), newest first, with subject and body. */
+  async commitsInRange(from: string, to: string): Promise<{ hash: string; subject: string; body: string }[]> {
+    const out = await this.run(['log', '--no-merges', '--format=%H%x1f%s%x1f%b%x1e', from ? `${from}..${to}` : to, '--']);
+    return parseRecords(out).map(r => ({ hash: r[0], subject: r[1] || '', body: (r[2] || '').trim() }));
+  }
 }
 
 /** Splits `origin/feature/x` into remote and branch, preferring the longest matching remote name. */

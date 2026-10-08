@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as crypto from 'crypto';
 import { Commit, FileChange, GitCli, Head, LocalBranch, OpState, Query, QueryKind, Refs, StackEntry, StatusEntry, Worktree, EMPTY_TREE, appendIgnore, ignorePattern, splitRemoteRef } from './git';
 import { layout } from './graph';
+import { Bump, classifyCommits, compareVersions, latestVersion, nextVersion, parseVersionTag, renderChangelog, suggestBump } from './release';
 import { Integrations, IntegrationState } from './integration';
 import { ProviderId } from './providers/types';
 import type { API, Repository } from './types/git';
@@ -18,7 +19,7 @@ const REBASE_ACTIONS = new Set(['pick', 'reword', 'edit', 'squash', 'fixup', 'dr
  * Message fields that end up as git arguments. They must never look like an option (e.g. `--upload-pack=…`),
  * so a webview bug cannot turn into arbitrary git options. File paths are always passed after `--` instead.
  */
-const ARG_FIELDS = ['sha', 'shas', 'ref', 'onto', 'name', 'remote', 'branch', 'newBranch', 'a', 'b', 'left', 'right', 'from', 'base', 'hash', 'parents'];
+const ARG_FIELDS = ['sha', 'shas', 'ref', 'onto', 'name', 'remote', 'branch', 'newBranch', 'a', 'b', 'left', 'right', 'from', 'base', 'hash', 'parents', 'to'];
 const looksLikeOption = (v: unknown) => (Array.isArray(v) ? v : [v]).some(x => typeof x === 'string' && x.startsWith('-'));
 const short = (s: string | null | undefined) => (s && /^[0-9a-f]{40}$/.test(s) ? s.slice(0, 7) : s || '');
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -1533,6 +1534,76 @@ export class RepoPanel {
   async on_stashBranch(m: Msg) {
     const name = await vscode.window.showInputBox({ prompt: `New branch from ${m.ref} (applies and drops the stash)` });
     if (name) await this.runOp(`Branch from ${m.ref}`, () => this.git().run(['stash', 'branch', name, m.ref]));
+  }
+
+  // ---- release tags and changelogs
+
+  /** Commits in `from..to` (empty `from` = whole history), classified as Conventional Commits. */
+  private async releaseCommits(from: string, to: string) {
+    return classifyCommits(await this.git().commitsInRange(from, to));
+  }
+
+  async on_releaseTag(m: Msg) {
+    const target = String(m.sha || 'HEAD');
+    const git = this.git();
+    const latest = latestVersion(await git.tagsMerged(target));
+    const commits = await this.releaseCommits(latest ? latest.name : '', target);
+    const bump = suggestBump(commits, latest?.major);
+    const items: PickItem[] = latest
+      ? (['patch', 'minor', 'major'] as Bump[]).map(b => ({ label: nextVersion(latest, b), description: b, id: nextVersion(latest, b), mode: b }))
+      : [{ label: 'v0.1.0', description: 'initial development', id: 'v0.1.0', mode: 'minor' }, { label: 'v1.0.0', description: 'first stable release', id: 'v1.0.0', mode: 'major' }];
+    const first = items.findIndex(it => it.mode === bump);
+    if (first > 0) items.unshift(...items.splice(first, 1));
+    if (latest) items[0].description = `${items[0].description} (suggested)`;
+    items.push({ label: '$(edit) Custom…', id: '' });
+    const since = latest ? `${commits.length} commit(s) since ${latest.name}` : `${commits.length} commit(s), no version tag yet`;
+    const pick = await vscode.window.showQuickPick<PickItem>(items, { placeHolder: `Release tag at ${target === 'HEAD' ? 'HEAD' : short(target)}: ${since}` });
+    if (!pick) return;
+    let name = pick.id || '';
+    if (!name) {
+      const entered = await vscode.window.showInputBox({ prompt: 'Release tag name', value: latest ? nextVersion(latest, bump) : 'v0.1.0', validateInput: v => (/^[^\s-]\S*$/.test(v) ? null : 'Enter a valid tag name') });
+      if (!entered) return;
+      name = entered;
+    }
+    const how = await vscode.window.showQuickPick<PickItem>(
+      [{ label: 'Use the generated changelog as tag message', id: 'changelog' }, { label: `Short message only (“Release ${name}”)`, id: 'short' }],
+      { placeHolder: `Annotation for ${name}` }
+    );
+    if (!how) return;
+    const message = how.id === 'changelog' ? renderChangelog({ version: name, date: new Date().toISOString().slice(0, 10), commits }) : `Release ${name}`;
+    const ok = await this.runOp(`Tag ${name}`, () => git.run(['tag', '-a', name, '-m', message, target]));
+    if (ok && this.lastRefs?.remotes.length) {
+      const push = await vscode.window.showInformationMessage(`Created tag ${name}.`, 'Push Tag');
+      if (push) await this.on_pushTag({ name });
+    }
+  }
+
+  /** Opens a changelog for `from..to` in an untitled Markdown document. `from`/`to` may come from a tag's menu. */
+  async on_changelog(m: Msg) {
+    const sorted = this.refs().tags.map(t => t.name).sort((a, b) => {
+      const va = parseVersionTag(a);
+      const vb = parseVersionTag(b);
+      return va && vb ? compareVersions(vb, va) : va ? -1 : vb ? 1 : a.localeCompare(b);
+    });
+    let from = m.from ? String(m.from) : '';
+    if (!from) {
+      const pick = await vscode.window.showQuickPick<PickItem>([...sorted.map(n => ({ label: n, id: n })), { label: '$(history) Whole history', id: '' }], { placeHolder: 'Changelog since which tag?' });
+      if (!pick) return;
+      from = pick.id || '';
+    }
+    let to = m.to ? String(m.to) : '';
+    if (!to) {
+      const pick = await vscode.window.showQuickPick<PickItem>(
+        [{ label: 'HEAD', description: 'unreleased changes', id: 'HEAD' }, ...sorted.filter(n => n !== from).map(n => ({ label: n, id: n }))],
+        { placeHolder: `Changelog ${from ? `${from}..` : 'up to '}…` }
+      );
+      if (!pick) return;
+      to = pick.id || 'HEAD';
+    }
+    const commits = await this.releaseCommits(from, to);
+    const content = renderChangelog({ version: to === 'HEAD' ? 'Unreleased' : to, date: new Date().toISOString().slice(0, 10), commits });
+    const doc = await vscode.workspace.openTextDocument({ language: 'markdown', content });
+    await vscode.window.showTextDocument(doc, { preview: false });
   }
 
   // ---------------------------------------------------------------- html
