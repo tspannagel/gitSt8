@@ -7,7 +7,9 @@
   const ROW = 24;
   const LANE = 14;
   const COLORS = ['#58a6ff', '#3fb950', '#d29922', '#f85149', '#a371f7', '#39c5cf', '#db61a2', '#e3b341', '#56d364', '#ff7b72'];
-  const HELP = 'Select a commit. Ctrl/Cmd+click to multi-select (2 = compare), Shift+click for a range.';
+  // macOS has Cmd/Option instead of Ctrl/Alt, and Ctrl+click there opens the context menu.
+  const MOD = /Mac/i.test(navigator.platform || navigator.userAgent) ? 'Cmd' : 'Ctrl';
+  const HELP = `Select a commit. ${MOD}+click to multi-select (2 = compare), Shift+click for a range.`;
 
   // Code points of VS Code's bundled codicon font (loaded by the extension).
   const ICONS = {
@@ -694,7 +696,7 @@
     el.innerHTML = `<div class="wip">
       <div class="commitbox">
         <div class="d-subject">Commit to ${esc(d.branch || 'detached HEAD')}</div>
-        <textarea id="commitMsg" placeholder="Message (Ctrl+Enter to commit)">${esc(S.commitMsg || '')}</textarea>
+        <textarea id="commitMsg" placeholder="Message (${MOD}+Enter to commit)">${esc(S.commitMsg || '')}</textarea>
         <div class="opts">
           <label class="check" title="${canAmend ? 'Replace the last commit' : 'No commit yet'}"><input type="checkbox" id="amend" ${S.amend ? 'checked' : ''} ${canAmend ? '' : 'disabled'}> Amend last commit</label>
           <label class="check" title="git commit --no-verify"><input type="checkbox" id="noVerify" ${S.noVerify ? 'checked' : ''}> Skip hooks</label>

@@ -1519,7 +1519,7 @@ ${font ? `<style nonce="${nonce}">@font-face { font-family: "codicon"; font-disp
   </section>
   <div id="splitter" title="Drag to resize"></div>
   <section id="detailsPane">
-    <div id="details"><div class="empty">Select a commit. Ctrl/Cmd+click to multi-select (2 = compare), Shift+click for a range.</div></div>
+    <div id="details"><div class="empty">Select a commit. ${process.platform === 'darwin' ? 'Cmd' : 'Ctrl'}+click to multi-select (2 = compare), Shift+click for a range.</div></div>
   </section>
 </div>
 <div id="menu" hidden></div>

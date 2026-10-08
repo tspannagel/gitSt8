@@ -29,9 +29,9 @@ gitSt8 puts history, branches, remotes, tags, worktrees, stashes, staging and ev
 
 Install **gitSt8** from the [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=tisp.gitst8):
 
-- In VS Code, open the Extensions view (`Ctrl+Shift+X`), search for `gitSt8` and select **Install**, or
+- In VS Code, open the Extensions view (`Ctrl+Shift+X`, `Cmd+Shift+X` on macOS), search for `gitSt8` and select **Install**, or
 - run `code --install-extension tisp.gitst8` in a terminal, or
-- press `Ctrl+P` and enter `ext install tisp.gitst8`.
+- press `Ctrl+P` (`Cmd+P` on macOS) and enter `ext install tisp.gitst8`.
 
 Updates arrive automatically through VS Code. To try a specific build, download the `.vsix` from [GitHub Releases](https://github.com/tspannagel/gitSt8/releases) and use **Extensions → … → Install from VSIX…**. To run it from source, see [Development](#development).
 
@@ -39,7 +39,7 @@ Updates arrive automatically through VS Code. To try a specific build, download 
 
 Any of these opens the gitSt8 tab in the bottom panel:
 
-- `Ctrl+Alt+Shift+G` (`Cmd+Alt+Shift+G` on macOS)
+- `Ctrl+Alt+Shift+G` (`Cmd+Option+Shift+G` / `⌘⌥⇧G` on macOS)
 - the **gitSt8** item in the status bar
 - the gitSt8 icon in the Source Control view's title bar
 - **gitSt8: Open Repository View** in the command palette
@@ -101,7 +101,7 @@ Prefer an editor tab? Set `"gitst8.location": "editor"`. You can also drag the p
 1. Click **✓ Commit** in the toolbar, or click the *Uncommitted changes* row.
 2. Hover a file for its buttons: **+** stages it, **−** unstages it, **↶** discards its changes, **↗** opens it. Use *stage all* / *unstage all* for everything at once.
 3. Click a staged file to diff HEAD ↔ index, or an unstaged file to diff index ↔ working tree.
-4. Type a message and press `Ctrl+Enter` (or click the button).
+4. Type a message and press `Ctrl+Enter` (`Cmd+Enter` on macOS) or click the button.
 
 Options:
 
@@ -158,7 +158,7 @@ Results show as a single line with a banner above. Files matching your search ar
 
 | Command | Where | What it does |
 | --- | --- | --- |
-| **Show Line's Commit in gitSt8** | Editor right-click, `Ctrl+Alt+Shift+B` | Finds the commit that last changed the line under the cursor (unsaved edits included), loads enough history to show it, and opens its details with the file highlighted |
+| **Show Line's Commit in gitSt8** | Editor right-click, `Ctrl+Alt+Shift+B` (`Cmd+Option+Shift+B` on macOS) | Finds the commit that last changed the line under the cursor (unsaved edits included), loads enough history to show it, and opens its details with the file highlighted |
 | **File History in gitSt8** | Editor, editor tab and Explorer right-click | Shows only the commits that touched that file (following renames) or folder |
 
 For inline blame annotations, use VS Code's built-in setting `git.blame.editorDecoration.enabled`. gitSt8 does not duplicate it.
@@ -169,7 +169,7 @@ For inline blame annotations, use VS Code's built-in setting `git.blame.editorDe
 
 ### Compare and diff
 
-- `Ctrl`+click two commits to compare them. The older commit goes on the left. The header shows how many commits are on each side; **swap** reverses the comparison.
+- `Ctrl`+click (`Cmd`+click on macOS) two commits to compare them. The older commit goes on the left. The header shows how many commits are on each side; **swap** reverses the comparison.
 - Right-click → **Compare with HEAD** / **Compare with working tree** / **Compare with ‹upstream›**.
 - Click any file in the list to open the side-by-side diff.
 
@@ -197,7 +197,7 @@ Stage the fix, right-click the commit it belongs to → **Fixup staged changes i
 
 ### Cherry-pick and revert several commits
 
-Select commits with `Ctrl`+click or `Shift`+click, then right-click → **Cherry-pick N commits onto ‹current›** (applied oldest first) or **Revert N commits** (newest first). Merge commits must be handled one at a time.
+Select commits with `Ctrl`+click (`Cmd`+click on macOS) or `Shift`+click, then right-click → **Cherry-pick N commits onto ‹current›** (applied oldest first) or **Revert N commits** (newest first). Merge commits must be handled one at a time.
 
 ### Stacked branches
 
@@ -277,14 +277,14 @@ In a multi-root workspace, or a folder with nested repositories, the repository 
 
 | Command | Default key | Description |
 | --- | --- | --- |
-| `gitSt8: Open Repository View` | `Ctrl+Alt+Shift+G` | Open or focus the view |
-| `gitSt8: Show Line's Commit in gitSt8` | `Ctrl+Alt+Shift+B` (editor focused) | Jump to the commit of the line under the cursor |
+| `gitSt8: Open Repository View` | `Ctrl+Alt+Shift+G` / macOS `Cmd+Option+Shift+G` | Open or focus the view |
+| `gitSt8: Show Line's Commit in gitSt8` | `Ctrl+Alt+Shift+B` / macOS `Cmd+Option+Shift+B` (editor focused) | Jump to the commit of the line under the cursor |
 | `gitSt8: File History in gitSt8` | | History of the active or right-clicked file or folder |
 | `gitSt8: Fetch All & Prune` | | Fetch and prune every open repository |
 | `gitSt8: Sign in to GitHub` / `Sign in to Azure DevOps` | | Sign in for pull requests and CI status |
 | `gitSt8: Set / Remove Azure DevOps Personal Access Token` | | Token-based access for Azure DevOps |
 
-Rebind these in **Keyboard Shortcuts** (`Ctrl+K Ctrl+S`, search "gitSt8"). On keyboard layouts where `Ctrl+Alt` acts as `AltGr` (German, for example), the defaults may not fire.
+Rebind these in **Keyboard Shortcuts** (`Ctrl+K Ctrl+S`, on macOS `Cmd+K Cmd+S`; search "gitSt8"). On keyboard layouts where `Ctrl+Alt` acts as `AltGr` (German, for example), the defaults may not fire.
 
 ### Keys inside the view
 
@@ -292,7 +292,7 @@ Rebind these in **Keyboard Shortcuts** (`Ctrl+K Ctrl+S`, search "gitSt8"). On ke
 | --- | --- |
 | `↑` / `↓` | Previous / next commit |
 | `Enter` in the search box | Search all history |
-| `Ctrl+Enter` in the commit message | Commit |
+| `Ctrl+Enter` (`Cmd+Enter` on macOS) in the commit message | Commit |
 | `F5` | Refresh |
 | `Esc` | Close menu or dialog |
 
@@ -361,7 +361,7 @@ npm test         # compile, then run unit + git integration tests (node:test)
 npm run package  # build gitst8-<version>.vsix
 ```
 
-Press `F5` (**Run gitSt8**) to start a development window with your other extensions disabled. Press `Ctrl+R` there to reload after a change. Changes to `package.json` need a full restart of the debug session.
+Press `F5` (**Run gitSt8**) to start a development window with your other extensions disabled. Press `Ctrl+R` (`Cmd+R` on macOS) there to reload after a change. Changes to `package.json` need a full restart of the debug session.
 
 | File | Responsibility |
 | --- | --- |
