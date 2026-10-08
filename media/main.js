@@ -27,6 +27,7 @@
     'debug-rerun': 0xebc0, rocket: 0xeb44, sparkle: 0xec10, 'stop-circle': 0xeba5,
     'list-flat': 0xeb84, 'file-code': 0xeae9, save: 0xeb4b, link: 0xeb15,
     'file-submodule': 0xeaec, database: 0xeace,
+    'verified-filled': 0xebe9, unverified: 0xeb76, question: 0xeb32,
   };
   const ic = (name, cls = '') => `<i class="ci ${cls}" aria-hidden="true">${ICONS[name] ? String.fromCharCode(ICONS[name]) : ''}</i>`;
   const fillIcons = (root = document) =>
@@ -104,6 +105,10 @@
         if (m.path !== undefined) S.highlight = m.path || null;
         if (commitBySha(m.sha)) select(m.sha, true);
         else if (m.sha !== 'WIP') post('commitDetails', { sha: m.sha });
+        break;
+      case 'filterRefs':
+        S.filterRefs = m.refs;
+        updateFilterRefsBtn();
         break;
       case 'queryApplied':
         S.highlight = m.path || null;
@@ -201,26 +206,112 @@
     head.title = d.head?.branch ? `Current branch: ${d.head.branch}` : 'HEAD is detached';
   }
 
+  const FILTER_FLAGS = ['mine', 'noMerges', 'firstParent'];
+
+  /** Chip labels for the active history filter. */
+  function filterChips(f) {
+    if (!f) return [];
+    const chips = [];
+    if (f.author) chips.push(['author', `Author: ${f.author}`]);
+    if (f.mine) chips.push(['mine', 'Only my commits']);
+    if (f.since) chips.push(['since', `Since ${f.since}`]);
+    if (f.until) chips.push(['until', `Until ${f.until}`]);
+    if (f.paths?.length) chips.push(['paths', `Path: ${f.paths.join(', ')}`]);
+    if (f.message) chips.push(['message', `Message: ${f.message}`]);
+    if (f.refs?.length) chips.push(['refs', `Branches: ${f.refs.join(', ')}`]);
+    if (f.noMerges) chips.push(['noMerges', 'No merges']);
+    if (f.firstParent) chips.push(['firstParent', 'First parent only']);
+    return chips;
+  }
+
   function renderQueryBar() {
     const q = S.data.query;
+    const f = S.data.filter;
     const el = $('#querybar');
-    if (!q) {
+    $('#filterBtn')?.classList.toggle('active', !!f);
+    if (!q && !f && !S.filterOpen) {
       el.hidden = true;
+      el.innerHTML = '';
       return;
     }
-    const v = esc(q.value);
-    const what = {
-      any: `Message, author or file name matches “${v}”`,
-      message: `Message matches “${v}”`,
-      author: `Author matches “${v}”`,
-      pickaxe: `Changes that add or remove “${v}”`,
-      regex: `Diffs matching /${v}/`,
-      path: q.exact ? `History of <code>${v}</code>${q.isDir ? ' (folder)' : ''}` : `Files or folders named *${v}*`,
-    }[q.kind];
-    const n = S.data.commits.length;
+    let row = el.querySelector('.qrow');
+    if (!row) {
+      el.innerHTML = '<div class="qrow"></div>';
+      row = el.querySelector('.qrow');
+    }
     el.hidden = false;
-    el.innerHTML = `${ic('search')}<span>${what}</span><span class="dir">${n}${S.data.hasMore ? '+' : ''} commit(s)${S.data.showAll ? ' · all branches' : ' · current branch'}</span>
-      <span class="spacer"></span><button class="tb" data-clearquery="1">${ic('close', 'sm')}Clear search</button>`;
+    const n = S.data.commits.length;
+    const scope = f?.refs?.length ? '' : S.data.showAll ? ' · all branches' : ' · current branch';
+    const count = `<span class="dir">${n}${S.data.hasMore ? '+' : ''} commit(s)${scope}</span>`;
+    let html = '';
+    if (q) {
+      const v = esc(q.value);
+      const what = {
+        any: `Message, author or file name matches “${v}”`,
+        message: `Message matches “${v}”`,
+        author: `Author matches “${v}”`,
+        pickaxe: `Changes that add or remove “${v}”`,
+        regex: `Diffs matching /${v}/`,
+        path: q.exact ? `History of <code>${v}</code>${q.isDir ? ' (folder)' : ''}` : `Files or folders named *${v}*`,
+      }[q.kind];
+      html += `${ic('search')}<span>${what}</span>`;
+    }
+    const chips = filterChips(f);
+    if (chips.length) {
+      html += `${ic('filter')}${chips.map(([k, label]) => `<span class="fchip" title="${esc(label)}"><span class="fl">${esc(label)}</span><button class="icon" data-rmfilter="${k}" title="Remove this filter">${ic('close', 'xs')}</button></span>`).join('')}`;
+    }
+    html += count + '<span class="spacer"></span>';
+    if (chips.length) html += `<button class="tb" data-clearfilter="1">${ic('close', 'sm')}Clear all</button>`;
+    if (q) html += `<button class="tb" data-clearquery="1">${ic('close', 'sm')}Clear search</button>`;
+    row.innerHTML = html;
+    syncFilterForm();
+  }
+
+  /** The inline filter form lives in the query bar; it is built once per opening so typing survives refreshes. */
+  function syncFilterForm() {
+    const el = $('#querybar');
+    const form = el.querySelector('#filterForm');
+    if (!S.filterOpen) {
+      form?.remove();
+      return;
+    }
+    if (form) return;
+    const f = S.data?.filter || {};
+    S.filterRefs = f.refs ? [...f.refs] : [];
+    const input = (id, label, val, ph) => `<label class="ff">${label}<input id="ff_${id}" type="text" value="${esc(val || '')}" placeholder="${esc(ph)}"></label>`;
+    const flag = (id, label) => `<label class="check"><input type="checkbox" id="ff_${id}" ${f[id] ? 'checked' : ''}>${label}</label>`;
+    el.insertAdjacentHTML('beforeend', `<div id="filterForm">
+      ${input('author', 'Author', f.author, 'name or email')}
+      ${input('since', 'Since', f.since, '2.weeks.ago, 2026-01-01')}
+      ${input('until', 'Until', f.until, '2026-06-30')}
+      ${input('paths', 'Path', (f.paths || []).join(', '), 'src/app, README.md')}
+      ${input('message', 'Message', f.message, 'regex')}
+      <span class="fflags">${flag('mine', 'Only my commits')}${flag('noMerges', 'No merges')}${flag('firstParent', 'First parent only')}</span>
+      <span class="fbtns"><button class="tb" id="ff_refs"></button><button class="tb primary-tb" id="ff_apply">${ic('check', 'sm')}Apply</button><button class="tb" id="ff_close">${ic('close', 'sm')}Close</button></span>
+    </div>`);
+    updateFilterRefsBtn();
+  }
+
+  function updateFilterRefsBtn() {
+    const b = $('#ff_refs');
+    if (!b) return;
+    const n = S.filterRefs?.length || 0;
+    b.innerHTML = `${ic('git-branch', 'sm')}${n ? `Branches (${n})…` : 'Branches…'}`;
+    b.title = n ? S.filterRefs.join(', ') : 'Show only the history of selected branches';
+  }
+
+  function applyFilterForm() {
+    const val = id => $('#ff_' + id).value.trim();
+    const filter = {
+      author: val('author'),
+      since: val('since'),
+      until: val('until'),
+      message: val('message'),
+      paths: val('paths').split(',').map(x => x.trim()).filter(Boolean),
+      refs: S.filterRefs || [],
+    };
+    for (const k of FILTER_FLAGS) filter[k] = $('#ff_' + k).checked;
+    post('setFilter', { filter });
   }
 
   function renderBanner() {
@@ -866,6 +957,15 @@
   }
 
   /** Message, metadata, checks and files of one commit. Used inline in the graph and in the pane. */
+  /** Badge for a signed commit's verification state; unsigned commits show nothing. */
+  function signatureBadge(sig) {
+    if (!sig || sig.state === 'none') return '';
+    const icon = { good: 'verified-filled', bad: 'error', unknown: 'unverified', expired: 'warning', revoked: 'warning', error: 'question' }[sig.state] || 'question';
+    const tip = [sig.label, sig.signer && `Signer: ${sig.signer}`, sig.key && `Key: ${sig.key}`].filter(Boolean).join('\n');
+    const text = sig.state === 'good' ? 'Verified' : sig.state === 'unknown' ? 'Unverified' : sig.state === 'error' ? "Can't verify" : sig.label;
+    return ` <span class="sig sig-${esc(sig.state)}" title="${esc(tip)}">${ic(icon, 'sm')}${esc(text)}</span>`;
+  }
+
   function commitHtml(d) {
     const c = d.commit;
     const [subject, ...rest] = c.message.split('\n');
@@ -877,7 +977,7 @@
       ${body ? `<div class="d-body ${S.rawBody ? 'raw' : 'md'} ${long && !S.bodyExpanded ? 'clamped' : ''}">${S.rawBody ? esc(body) : renderMarkdown(body)}</div>
         ${long ? `<button class="link more" data-bodytoggle="1">${S.bodyExpanded ? 'Show less' : 'Show more'}</button>` : ''}` : ''}
       <div class="d-meta">
-        <span>${esc(c.author)} &lt;${esc(c.email)}&gt; · ${absDate(c.date)}</span>
+        <span>${esc(c.author)} &lt;${esc(c.email)}&gt; · ${absDate(c.date)}${signatureBadge(c.signature)}</span>
         ${c.committer !== c.author ? `<span>committed by ${esc(c.committer)} · ${absDate(c.commitDate)}</span>` : ''}
         <span><code>${c.hash}</code> <button class="link" data-copy="${c.hash}">copy</button></span>
         <span>parents: ${c.parents.map(p => `<button class="link" data-goto="${p}">${p.slice(0, 7)}</button>`).join(' ') || 'none'}</span>
@@ -1654,6 +1754,23 @@
     }
 
     if (t.closest('[data-clearquery]')) return post('search', {});
+    if (t.closest('[data-clearfilter]')) return post('setFilter', { filter: null });
+    const rmFilter = t.closest('[data-rmfilter]');
+    if (rmFilter) {
+      const next = { ...S.data.filter };
+      delete next[rmFilter.dataset.rmfilter];
+      return post('setFilter', { filter: next });
+    }
+    if (t.closest('#filterBtn')) {
+      S.filterOpen = !S.filterOpen;
+      return renderQueryBar();
+    }
+    if (t.closest('#ff_close')) {
+      S.filterOpen = false;
+      return renderQueryBar();
+    }
+    if (t.closest('#ff_apply')) return applyFilterForm();
+    if (t.closest('#ff_refs')) return post('pickFilterRefs', { current: S.filterRefs || [] });
 
     const act = t.closest('[data-act]');
     if (act) return post(act.dataset.act, { path: act.dataset.path, side: act.dataset.side });
@@ -1826,6 +1943,14 @@
   filterInput.addEventListener('input', e => {
     S.filter = e.target.value;
     applyFilter();
+  });
+  document.addEventListener('keydown', e => {
+    if (!e.target.closest?.('#filterForm')) return;
+    if (e.key === 'Enter' && e.target.tagName === 'INPUT' && e.target.type === 'text') applyFilterForm();
+    else if (e.key === 'Escape') {
+      S.filterOpen = false;
+      renderQueryBar();
+    }
   });
   filterInput.addEventListener('keydown', e => {
     if (e.key !== 'Enter') return;

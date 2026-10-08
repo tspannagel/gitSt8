@@ -3,6 +3,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { LfsSummary, parseLfsFiles, summarizeLfs, usesLfs } from './lfs';
 import { Submodule, mergeSubmodules, parseGitlinks, parseGitmodules, parseSubmoduleStatus } from './submodules';
+import { LogFilter, authorArgs, buildFilterArgs } from './logFilter';
+import { Signature, mapSignature } from './signature';
 
 const FS = '\x1f';
 const RS = '\x1e';
@@ -45,6 +47,7 @@ export interface CommitDetails {
   committerEmail: string;
   commitDate: number;
   message: string;
+  signature: Signature;
 }
 
 export interface Head {
@@ -196,11 +199,11 @@ export class GitCli {
     }
   }
 
-  async log({ limit, all, query }: { limit: number; all: boolean; query?: Query | null }): Promise<{ commits: Commit[]; hasMore: boolean }> {
+  async log({ limit, all, query, filter }: { limit: number; all: boolean; query?: Query | null; filter?: LogFilter | null }): Promise<{ commits: Commit[]; hasMore: boolean }> {
     if (query?.kind === 'any') {
       // Union of message, author and file-name matches, newest first.
       const kinds: QueryKind[] = ['message', 'author', 'path'];
-      const parts = await Promise.all(kinds.map(kind => this.log({ limit, all, query: { kind, value: query.value } })));
+      const parts = await Promise.all(kinds.map(kind => this.log({ limit, all, filter, query: { kind, value: query.value } })));
       const byHash = new Map<string, Commit>();
       for (const p of parts) for (const c of p.commits) byHash.set(c.hash, c);
       const commits = [...byHash.values()].sort((a, b) => b.date - a.date);
@@ -210,6 +213,7 @@ export class GitCli {
     }
     const args = ['log', '--topo-order', `--max-count=${limit + 1}`, '--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%s%x1e'];
     let pathspec: string[] | null = null;
+    const fa = buildFilterArgs(filter, filter?.mine ? (await this.tryRun(['config', 'user.email'])).trim() : undefined);
     if (query) {
       switch (query.kind) {
         case 'path':
@@ -226,7 +230,7 @@ export class GitCli {
           args.push(`--grep=${query.value}`, '--regexp-ignore-case');
           break;
         case 'author':
-          args.push(`--author=${query.value}`, '--regexp-ignore-case');
+          fa.authors.push(query.value);
           break;
         case 'pickaxe':
           args.push(`-S${query.value}`);
@@ -236,9 +240,19 @@ export class GitCli {
           break;
       }
     }
-    if (all) args.push('--exclude=refs/stash', '--all');
+    args.push(...fa.args, ...authorArgs(fa.authors, fa.emails));
+    if (fa.authors.length || fa.emails.length) args.push('--regexp-ignore-case');
+    // A search and a filter on the message both have to match.
+    if (query?.kind === 'message' && filter?.message) args.push('--all-match');
+    if (fa.refs.length) args.push(...fa.refs);
+    else if (all) args.push('--exclude=refs/stash', '--all');
     else args.push('HEAD');
-    if (pathspec) args.push('--', ...pathspec);
+    const specs = [...(pathspec || []), ...fa.pathspec];
+    if (specs.length > 1) {
+      const i = args.indexOf('--follow');
+      if (i >= 0) args.splice(i, 1); // --follow needs exactly one path
+    }
+    if (specs.length) args.push('--', ...specs);
     const out = await this.tryRun(args);
     const commits: Commit[] = parseRecords(out).map(f => ({
       hash: f[0],
@@ -402,7 +416,7 @@ export class GitCli {
   }
 
   async commit(sha: string): Promise<CommitDetails> {
-    const out = await this.run(['show', '-s', '--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%cn%x1f%ce%x1f%ct%x1f%B', sha]);
+    const out = await this.run(['show', '-s', '--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%cn%x1f%ce%x1f%ct%x1f%G?%x1f%GS%x1f%GK%x1f%B', sha]);
     const f = out.split(FS);
     return {
       hash: f[0],
@@ -413,7 +427,8 @@ export class GitCli {
       committer: f[5],
       committerEmail: f[6],
       commitDate: Number(f[7]),
-      message: (f[8] || '').trim(),
+      signature: mapSignature(f[8], f[9], f[10]),
+      message: (f.slice(11).join(FS) || '').trim(),
     };
   }
 

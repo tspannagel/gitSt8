@@ -80,7 +80,7 @@ Prefer an editor tab? Set `"gitst8.location": "editor"`. You can also drag the p
 
 **Commit graph.** Every branch is drawn with its own lane. Labels on a commit show the local branches (green), remote branches (blue), tags (amber) and stashes (pink) that point at it. When your working tree has changes, an **Uncommitted changes** row sits on top. History loads in pages of 400 commits; use **Load more** at the bottom.
 
-**Commit details** open inline, right under the commit you click, so the commit box stays where it is. Click the commit again to close them.
+**Commit details** open inline, right under the commit you click, so the commit box stays where it is. Click the commit again to close them. Signed commits show a badge next to the author (verified, unverified, bad, expired or revoked, or "can't verify" when git cannot check the signature, e.g. gpg is missing or `gpg.ssh.allowedSignersFile` is not set); hover it for the signer and key. Unsigned commits show nothing.
 
 **Details pane.** Shows the commit box (staged and unstaged changes) by default. A comparison, a stash, the reflog or a multi-selection temporarily take its place; clicking a single commit (or clearing the selection) brings the commit box back. Click any file to open VS Code's diff editor, and right-click it for *Open file*, *File history* and *Copy path*. Drag the divider to resize the pane. It sits to the right of the graph in the bottom panel and below it in a tall editor tab.
 
@@ -184,6 +184,19 @@ The search box has several modes:
 | **Code added/removed** | That add or remove an exact string (`git log -S`) |
 | **Diff matches regex** | Whose changed lines match a regex (`git log -G`) |
 | **File / folder** | That touch a file or folder. Part of a name (`panel`) matches any file or folder containing it, at any depth. An exact path shows that file's history and follows renames |
+
+The **Filter** button (funnel icon) in the toolbar opens a form above the graph. Filters combine with each other and with the search above (all of them must match):
+
+| Filter | Shows commits… |
+| --- | --- |
+| **Author** | By that name or email. **Only my commits** uses your `user.email` |
+| **Since / Until** | In a date range. Anything git accepts works: `2.weeks.ago`, `2026-01-01` |
+| **Path** | That touch the given files or folders (comma-separated) |
+| **Message** | Whose message matches a regex |
+| **No merges** / **First parent only** | Hide merge commits, or follow only the first parent of merges |
+| **Branches…** | Reachable from the branches you pick, instead of All branches / current branch |
+
+Active filters show as removable chips above the graph, with **Clear all**. Branch, no-merges and first-parent filters keep the real graph; the others show a single line like search results.
 
 Results show as a single line with a banner above. Files matching your search are highlighted and listed first in the details. Click **Clear search** to go back to the full graph. The **All branches** toggle decides whether search covers every branch or only HEAD.
 

@@ -7,6 +7,7 @@ import { Commit, FileChange, GitCli, Head, LocalBranch, OpState, Query, QueryKin
 import { layout } from './graph';
 import { readBisect } from './bisect';
 import { Bump, classifyCommits, compareVersions, latestVersion, nextVersion, parseVersionTag, renderChangelog, suggestBump } from './release';
+import { LogFilter, keepsGraph, normalizeFilter } from './logFilter';
 import { Integrations, IntegrationState } from './integration';
 import { ProviderId } from './providers/types';
 import { buildCommitPrompt, cleanModelOutput } from './commitPrompt';
@@ -148,6 +149,7 @@ export class RepoPanel {
   private limit = PAGE;
   private showAll = true;
   private query: Query | null = null;
+  private filter: LogFilter | null = null;
   private tagSync: { remote: string; tags: Record<string, string> } | null = null;
   private splitting: { sha: string; subject: string } | null = null;
   private readonly disposables: vscode.Disposable[] = [];
@@ -303,6 +305,7 @@ export class RepoPanel {
     this.root = root;
     this.limit = PAGE;
     this.query = null;
+    this.filter = null;
     this.tagSync = null;
     this.splitting = null;
     this.lastIntegration = null;
@@ -385,7 +388,7 @@ export class RepoPanel {
     const git = this.git();
     const base = await git.defaultBase(config().get<string>('stackBase'));
     const [log, refs, stashes, status, op, head, worktrees, stack] = await Promise.all([
-      git.log({ limit: this.limit, all: this.showAll, query: this.query }),
+      git.log({ limit: this.limit, all: this.showAll, query: this.query, filter: this.filter }),
       git.refs(),
       git.stashes(),
       git.status(),
@@ -406,10 +409,10 @@ export class RepoPanel {
     const wip = await this.wipDetails(status, head);
 
     const commits = log.commits;
-    if (this.query) {
+    if (this.query || !keepsGraph(this.filter)) {
       // Search results are not a connected history: draw them as one line.
       commits.forEach((c, i) => (c.graphParents = commits[i + 1] ? [commits[i + 1].hash] : []));
-    } else if (status.length) {
+    } else if (status.length && !this.filter?.refs?.length) {
       const staged = status.filter(f => f.x !== ' ' && f.x !== '?').length;
       const unstaged = status.filter(f => f.y !== ' ').length;
       commits.unshift({
@@ -447,6 +450,7 @@ export class RepoPanel {
         hasMore: log.hasMore,
         showAll: this.showAll,
         query: this.query,
+        filter: this.filter,
         tagSync: this.tagSync,
         worktrees,
         submodules,
@@ -542,9 +546,10 @@ export class RepoPanel {
     const git = this.git();
     if (sha && !this.lastCommits?.some(c => c.hash === sha)) {
       this.query = null;
+      this.filter = null;
       let limit = this.limit;
       for (;;) {
-        const { commits, hasMore } = await git.log({ limit, all: this.showAll, query: null });
+        const { commits, hasMore } = await git.log({ limit, all: this.showAll, query: null, filter: null });
         if (commits.some(c => c.hash === sha) || !hasMore || limit >= REVEAL_LIMIT) break;
         limit *= 2;
       }
@@ -1984,6 +1989,27 @@ export class RepoPanel {
     }, true);
   }
 
+  // ---- history filters
+
+  async on_setFilter(m: Msg) {
+    await this.ready;
+    this.filter = normalizeFilter(m.filter);
+    this.limit = PAGE;
+    await this.collect();
+    this.post({ type: 'queryApplied', path: this.query && (this.query.kind === 'path' || this.query.kind === 'any') ? this.query.value : null });
+  }
+  /** Multi-select of branches for the filter's "Branches…"; the answer goes back to the form. */
+  async on_pickFilterRefs(m: Msg) {
+    const refs = this.refs();
+    const chosen = new Set<string>(Array.isArray(m.current) ? m.current.map(String) : []);
+    const items = [
+      ...refs.local.map(b => ({ label: b.name, description: 'local', picked: chosen.has(b.name) })),
+      ...refs.remote.map(b => ({ label: b.name, description: 'remote', picked: chosen.has(b.name) })),
+    ];
+    const picks = await vscode.window.showQuickPick(items, { canPickMany: true, placeHolder: 'Show only the history of these branches' });
+    if (picks) this.post({ type: 'filterRefs', refs: picks.map(p => p.label) });
+  }
+
   // ---------------------------------------------------------------- html
 
   html() {
@@ -2037,6 +2063,7 @@ ${font ? `<style nonce="${nonce}">@font-face { font-family: "codicon"; font-disp
   </select>
   <input id="filter" type="search" placeholder="Filter loaded commits…">
   </span>
+  <button class="tb" id="filterBtn" title="Filter history by author, date, path, message or branches"><i class="ci" data-icon="filter"></i></button>
   <button class="tb" data-cmd="refresh" title="Refresh (F5)"><i class="ci" data-icon="refresh"></i></button>
 </div>
 <div id="querybar" hidden></div>
