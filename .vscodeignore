@@ -9,3 +9,4 @@ CLAUDE.md
 .gitignore
 .github/**
 .vscode-test/**
+.claude/**
