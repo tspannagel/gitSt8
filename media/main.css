@@ -625,3 +625,9 @@ table.reflog .btns { text-align: right; }
 #busy[hidden] { display: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
 #busy .ci { animation: spin 1s linear infinite; }
+
+/* bisect markers on graph rows */
+.badge.bis-good { border-color: var(--c-branch); color: var(--c-branch); }
+.badge.bis-bad { border-color: var(--vscode-errorForeground); color: var(--vscode-errorForeground); }
+.badge.bis-skip { border-color: var(--muted); color: var(--muted); border-style: dashed; }
+.badge.bis-cur { border-color: var(--c-tag); color: var(--c-tag); font-weight: 700; }

@@ -231,6 +231,18 @@ Stage the fix, right-click the commit it belongs to → **Fixup staged changes i
 
 Select commits with `Ctrl`+click (`Cmd`+click on macOS) or `Shift`+click, then right-click → **Cherry-pick N commits onto ‹current›** (applied oldest first) or **Revert N commits** (newest first). Merge commits must be handled one at a time.
 
+### Find a bad commit with bisect
+
+`git bisect` finds the commit that introduced a bug by binary search. Start it from the graph (requires a clean working tree):
+
+- Right-click a commit that still worked → **Bisect: mark as good (HEAD is bad)**.
+- Right-click a broken commit → **Bisect: mark as bad…** and enter a known good commit, branch or tag.
+- Select exactly two commits → **Bisect between these**. The older one is good, the newer one is bad.
+
+gitSt8 checks out a commit in the middle and shows a banner: *Bisecting: ~N revisions left (~K steps)*. Test your code, then press **Good**, **Bad** or **Skip** (for a commit you cannot test). You can also right-click any commit → **Bisect: mark good / mark bad / skip**. Graph rows get pills for good, bad, skipped and the commit to test next. The counts ignore skipped commits, so they are an upper bound if you skip.
+
+When the search ends, the banner names the first bad commit: **Show commit** selects it in the graph. **Reset** ends the bisect and returns you to your original branch. Automated `git bisect run` scripts are not supported.
+
 ### Stacked branches
 
 When several of your branches build on each other (`main ← feature-a ← feature-b`), the **Stack** section shows them as a chain down to the base branch, with the number of commits each adds. From the section's **⋯** menu:

@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as crypto from 'crypto';
 import { Commit, FileChange, GitCli, Head, LocalBranch, OpState, Query, QueryKind, Refs, StackEntry, StatusEntry, Worktree, EMPTY_TREE, appendIgnore, ignorePattern, splitRemoteRef } from './git';
 import { layout } from './graph';
+import { readBisect } from './bisect';
 import { Integrations, IntegrationState } from './integration';
 import { ProviderId } from './providers/types';
 import type { API, Repository } from './types/git';
@@ -18,7 +19,7 @@ const REBASE_ACTIONS = new Set(['pick', 'reword', 'edit', 'squash', 'fixup', 'dr
  * Message fields that end up as git arguments. They must never look like an option (e.g. `--upload-pack=…`),
  * so a webview bug cannot turn into arbitrary git options. File paths are always passed after `--` instead.
  */
-const ARG_FIELDS = ['sha', 'shas', 'ref', 'onto', 'name', 'remote', 'branch', 'newBranch', 'a', 'b', 'left', 'right', 'from', 'base', 'hash', 'parents'];
+const ARG_FIELDS = ['sha', 'shas', 'ref', 'onto', 'name', 'remote', 'branch', 'newBranch', 'a', 'b', 'left', 'right', 'from', 'base', 'hash', 'parents', 'bad', 'good'];
 const looksLikeOption = (v: unknown) => (Array.isArray(v) ? v : [v]).some(x => typeof x === 'string' && x.startsWith('-'));
 const short = (s: string | null | undefined) => (s && /^[0-9a-f]{40}$/.test(s) ? s.slice(0, 7) : s || '');
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -388,6 +389,7 @@ export class RepoPanel {
       base ? git.stack(base) : Promise.resolve([] as StackEntry[]),
     ]);
     if (!op) this.splitting = null;
+    const bisect = await readBisect(git);
     // Remove rebase scratch files once no rebase uses them. Checked synchronously right before deleting,
     // because a rebase may have started (or stopped) while the queries above ran.
     const gitDir = await git.gitDir().catch(() => null);
@@ -432,6 +434,7 @@ export class RepoPanel {
         refs,
         stashes,
         op: op && { ...op, splitting: this.splitting },
+        bisect,
         hasMore: log.hasMore,
         showAll: this.showAll,
         query: this.query,
@@ -1533,6 +1536,34 @@ export class RepoPanel {
   async on_stashBranch(m: Msg) {
     const name = await vscode.window.showInputBox({ prompt: `New branch from ${m.ref} (applies and drops the stash)` });
     if (name) await this.runOp(`Branch from ${m.ref}`, () => this.git().run(['stash', 'branch', name, m.ref]));
+  }
+
+  // ---------------------------------------------------------------- bisect
+
+  /** Starts a bisect between a known bad and a known good commit; git checks out the first candidate. */
+  async on_bisectStart(m: Msg) {
+    if (!(await this.requireCleanTree('Bisecting'))) return;
+    const bad = m.bad || 'HEAD';
+    let good: string | undefined = m.good;
+    if (!good) {
+      good = (await vscode.window.showInputBox({ prompt: `Last known good commit, branch or tag (${short(bad)} is bad)`, validateInput: v => (v.trim().startsWith('-') ? 'Enter a commit, branch or tag' : undefined) }))?.trim();
+      if (!good) return;
+    }
+    const g = good;
+    await this.runOp('Start bisect', () => this.git().run(['bisect', 'start', bad, g, '--']));
+  }
+
+  /** Marks `sha` (default: the checked out candidate) as good, bad or skipped. */
+  async on_bisectMark(m: Msg) {
+    if (!['good', 'bad', 'skip'].includes(m.verdict)) return;
+    const args = ['bisect', m.verdict];
+    if (m.sha) args.push(m.sha);
+    await this.runOp(`Bisect: mark ${m.verdict}`, () => this.git().run(args));
+  }
+
+  /** Ends the bisect and returns to the branch it started from. */
+  async on_bisectReset() {
+    await this.runOp('Reset bisect', () => this.git().run(['bisect', 'reset']));
   }
 
   // ---------------------------------------------------------------- html

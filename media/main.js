@@ -202,6 +202,7 @@
   function renderBanner() {
     const op = S.data.op;
     const el = $('#banner');
+    if (!op && S.data.bisect?.active) return renderBisectBanner(el, S.data.bisect);
     if (!op) {
       el.hidden = true;
       el.innerHTML = '';
@@ -236,6 +237,33 @@
           <button class="link" data-act="takeSide" data-side="theirs" data-path="${esc(p)}">Take ${theirs}</button>
           <button class="link" data-act="markResolved" data-path="${esc(p)}">Mark resolved</button>
         </li>`).join('')}</ul>` : ''}`;
+  }
+
+  function renderBisectBanner(el, b) {
+    el.hidden = false;
+    if (b.culprit) {
+      const c = commitBySha(b.culprit);
+      el.innerHTML = `
+        <span class="title">${ic('error', 'sm')}Bisect found the first bad commit</span>
+        <span><b>${esc(short(b.culprit))}</b>${c ? ` ${esc(c.subject)}` : ''}</span>
+        <span class="actions">
+          <button class="primary" data-bisect="show" data-sha="${esc(b.culprit)}">Show commit</button>
+          <button data-cmd="bisectReset">Reset</button>
+        </span>`;
+      return;
+    }
+    const left = b.remaining === undefined
+      ? `Mark a good and a bad commit to start narrowing${b.bad ? '' : ' (no bad commit yet)'}.`
+      : `~${b.remaining} revision${b.remaining === 1 ? '' : 's'} left (~${b.steps} step${b.steps === 1 ? '' : 's'}). Test ${esc(short(b.current))}, then mark it.`;
+    el.innerHTML = `
+      <span class="title">${ic('search', 'sm')}Bisecting</span>
+      <span>${left}</span>
+      <span class="actions">
+        <button data-bisect="good">${ic('pass-filled', 'sm')}Good</button>
+        <button data-bisect="bad">${ic('error', 'sm')}Bad</button>
+        <button data-bisect="skip">${ic('skip', 'sm')}Skip</button>
+        <button class="danger" data-cmd="bisectReset">Reset</button>
+      </span>`;
   }
 
   // ---- sidebar
@@ -364,10 +392,18 @@
     for (const r of refs.remote) add(r.sha, { cls: 'remote', name: r.name, ref: 'remote', remote: r.remote, branch: r.branch });
     for (const t of refs.tags) add(t.sha, { cls: 'tag', name: t.name, ref: 'tag' });
     S.data.stashes.forEach((s, i) => add(s.parents[0], { cls: 'stash', name: s.ref, ref: 'stash', idx: i }));
+    const bis = S.data.bisect;
+    if (bis?.active) {
+      const mark = (sha, cls, name) => add(sha, { cls, name, ref: 'bisect' });
+      for (const sha of bis.good) mark(sha, 'bis-good', 'good');
+      for (const sha of bis.skipped) mark(sha, 'bis-skip', 'skipped');
+      if (bis.bad) mark(bis.bad, 'bis-bad', bis.culprit ? 'first bad' : 'bad');
+      if (bis.current && !bis.culprit) mark(bis.current, 'bis-cur', 'test this');
+    }
     return map;
   }
 
-  const BADGE_ICONS = { head: 'check', local: 'git-branch', remote: 'cloud', tag: 'tag', stash: 'archive' };
+  const BADGE_ICONS = { head: 'check', local: 'git-branch', remote: 'cloud', tag: 'tag', stash: 'archive', 'bis-good': 'pass-filled', 'bis-bad': 'error', 'bis-skip': 'skip', 'bis-cur': 'search' };
 
   // ---- hosting service integration (GitHub / Azure DevOps)
 
@@ -1021,6 +1057,9 @@
       { label: `Cherry-pick ${list.length} commits onto ${cur}`, icon: 'git-commit', run: () => post('cherryPickMany', { shas: list }) },
       { label: `Revert ${list.length} commits`, icon: 'discard', run: () => post('revertMany', { shas: list }) },
       { label: 'Compare oldest ↔ newest', icon: 'git-compare', run: () => compare(list[0], list[list.length - 1]) },
+      ...(list.length === 2 && !S.data.bisect?.active
+        ? [{ label: 'Bisect between these (older = good, newer = bad)', icon: 'search', run: () => post('bisectStart', { good: list[0], bad: list[1] }) }]
+        : []),
       '-',
       { label: 'Copy SHAs', icon: 'copy', run: () => post('copy', { text: list.join('\n') }) },
     ];
@@ -1059,6 +1098,17 @@
       '-',
       { label: 'Compare with HEAD', icon: 'git-compare', run: () => compare(c.hash, 'HEAD') },
       { label: 'Compare with working tree', icon: 'git-compare', run: () => compare(c.hash, null) },
+      '-',
+      ...(S.data.bisect?.active
+        ? [
+            { label: 'Bisect: mark good', icon: 'pass-filled', run: () => post('bisectMark', { verdict: 'good', sha: c.hash }) },
+            { label: 'Bisect: mark bad', icon: 'error', run: () => post('bisectMark', { verdict: 'bad', sha: c.hash }) },
+            { label: 'Bisect: skip', icon: 'skip', run: () => post('bisectMark', { verdict: 'skip', sha: c.hash }) },
+          ]
+        : [
+            { label: 'Bisect: mark as good (HEAD is bad)', icon: 'pass-filled', run: () => post('bisectStart', { good: c.hash }) },
+            { label: 'Bisect: mark as bad…', icon: 'error', run: () => post('bisectStart', { bad: c.hash }) },
+          ]),
       '-',
       { label: 'Copy SHA', icon: 'copy', run: () => post('copy', { text: c.hash }) },
       { label: 'Copy subject', icon: 'copy', run: () => post('copy', { text: c.subject }) },
@@ -1427,6 +1477,12 @@
       return showMenu(r.left, r.bottom, sectionMenu(secMenu.dataset.secmenu));
     }
 
+    const bisBtn = t.closest('[data-bisect]');
+    if (bisBtn) {
+      const v = bisBtn.dataset.bisect;
+      return v === 'show' ? reveal(bisBtn.dataset.sha) : post('bisectMark', { verdict: v });
+    }
+
     const cmdBtn = t.closest('[data-cmd]');
     if (cmdBtn) return cmdBtn.dataset.cmd === 'openCommit' ? openCommit() : post(cmdBtn.dataset.cmd);
 
@@ -1554,7 +1610,7 @@
     else if (prEl) items = prMenu(prEl.dataset.pr);
     else if (ciEl) items = ciMenu(ciEl.dataset.ci);
     else if (t.closest('#integration') && S.integration?.signedIn) items = integrationMenu();
-    else if (badge && badge.dataset.badge !== 'head') items = refMenu(badge.dataset.badge, badge.dataset);
+    else if (badge && badge.dataset.badge !== 'head' && badge.dataset.badge !== 'bisect') items = refMenu(badge.dataset.badge, badge.dataset);
     else if (item) items = refMenu(item.dataset.ref, item.dataset);
     else if (group) items = remoteMenu(group.dataset.remotegroup);
     else if (secHead) items = sectionMenu(secHead.parentElement.dataset.section);
