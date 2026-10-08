@@ -246,7 +246,22 @@ button.tb.primary-tb .ci { color: var(--c-branch); }
   flex: none;
 }
 #querybar[hidden] { display: none; }
+#querybar { flex-wrap: wrap; }
+#querybar .qrow { display: flex; align-items: center; gap: 10px; flex: 1 1 100%; min-width: 0; flex-wrap: wrap; }
 #querybar .spacer { flex: 1; }
+.fchip { display: inline-flex; align-items: center; gap: 2px; padding: 0 2px 0 8px; max-width: 280px; border-radius: 10px; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); }
+.fchip .fl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fchip button.icon { color: inherit; }
+#filterBtn.active { color: var(--vscode-textLink-foreground); }
+#filterForm { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px 12px; flex: 1 1 100%; padding: 4px 0; }
+#filterForm .ff { display: flex; flex-direction: column; gap: 2px; color: var(--muted); }
+#filterForm .ff input { width: 150px; }
+#filterForm .fflags, #filterForm .fbtns { display: flex; align-items: center; gap: 10px; }
+.sig { display: inline-flex; align-items: center; gap: 3px; margin-left: 8px; cursor: default; }
+.sig-good { color: var(--c-branch); }
+.sig-bad { color: var(--vscode-errorForeground); }
+.sig-expired, .sig-revoked { color: var(--c-tag); }
+.sig-unknown, .sig-error { color: var(--muted); }
 #querybar code { font-family: var(--vscode-editor-font-family); }
 .dir { color: var(--muted); }
 
