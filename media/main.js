@@ -25,7 +25,7 @@
     github: 0xea84, 'azure-devops': 0xebe8, 'git-pull-request': 0xea64, 'git-pull-request-draft': 0xebdb,
     'pass-filled': 0xebb3, error: 0xea87, 'circle-large-outline': 0xebb5, skip: 0xec6a, 'sign-in': 0xea6f,
     'debug-rerun': 0xebc0, rocket: 0xeb44, sparkle: 0xec10, 'stop-circle': 0xeba5,
-    'list-flat': 0xeb84,
+    'list-flat': 0xeb84, 'file-code': 0xeae9, save: 0xeb4b, link: 0xeb15,
   };
   const ic = (name, cls = '') => `<i class="ci ${cls}" aria-hidden="true">${ICONS[name] ? String.fromCharCode(ICONS[name]) : ''}</i>`;
   const fillIcons = (root = document) =>
@@ -237,6 +237,7 @@
       merge: `Merge in progress (${esc(short(op.head))})`,
       'cherry-pick': `Cherry-pick ${op.head ? `of ${esc(short(op.head))} ` : ''}in progress`,
       revert: `Revert ${op.head ? `of ${esc(short(op.head))} ` : ''}in progress`,
+      am: `Applying patches${op.total ? ` (patch ${op.step}/${op.total})` : ''}`,
     }[op.kind];
     const ours = op.kind === 'rebase' ? 'upstream' : 'ours';
     const theirs = op.kind === 'rebase' ? 'your commit' : 'theirs';
@@ -1102,6 +1103,8 @@
         { label: 'Stash including untracked…', icon: 'archive', run: () => post('stashSave', { mode: 'untracked' }) },
         { label: 'Stash staged changes only…', icon: 'archive', run: () => post('stashSave', { mode: 'staged' }) },
         { label: 'Stash, keep index…', icon: 'archive', run: () => post('stashSave', { mode: 'keepIndex' }) },
+        '-',
+        { label: 'Apply patch…', icon: 'file-code', run: () => post('applyPatch') },
       ];
     }
     return null;
@@ -1120,6 +1123,7 @@
         : []),
       '-',
       { label: 'Copy SHAs', icon: 'copy', run: () => post('copy', { text: list.join('\n') }) },
+      { label: 'Save as patch files…', icon: 'save', run: () => post('savePatches', { shas: list }) },
     ];
   }
 
@@ -1170,7 +1174,23 @@
           ]),
       '-',
       { label: 'Copy SHA', icon: 'copy', run: () => post('copy', { text: c.hash }) },
+      { label: 'Copy short SHA', icon: 'copy', run: () => post('copy', { text: s }) },
       { label: 'Copy subject', icon: 'copy', run: () => post('copy', { text: c.subject }) },
+      { label: 'Copy full message', icon: 'copy', run: () => post('copyMessage', { sha: c.hash }) },
+      ...(S.integration
+        ? [
+            '-',
+            { label: `Open commit on ${PROVIDER[S.integration.provider].name}`, icon: PROVIDER[S.integration.provider].icon, run: () => post('hostLink', { what: 'commit', action: 'open', sha: c.hash }) },
+            { label: 'Copy link to commit', icon: 'link', run: () => post('hostLink', { what: 'commit', action: 'copy', sha: c.hash }) },
+          ]
+        : []),
+      ...(isMerge
+        ? []
+        : [
+            '-',
+            { label: 'Copy as patch', icon: 'file-code', run: () => post('copyPatch', { sha: c.hash }) },
+            { label: 'Save as patch…', icon: 'save', run: () => post('savePatch', { sha: c.hash }) },
+          ]),
     ];
   }
 
@@ -1205,6 +1225,9 @@
         ...(b?.upstream && !b.gone ? [{ label: `Compare with ${b.upstream}`, icon: 'git-compare', run: () => compare(b.upstream, name) }] : []),
         { label: 'Compare with working tree', icon: 'git-compare', run: () => compare(name, null) },
         '-',
+        ...(S.integration && b?.upstream?.startsWith(`${S.integration.remote}/`) && !b.gone && !prsForBranch('local', b).length
+          ? [{ label: 'Create pull request in browser…', icon: 'git-pull-request', run: () => post('createPr', { name }) }, '-']
+          : []),
         { label: 'Rename…', icon: 'edit', run: () => post('renameBranch', { name }) },
         { label: 'Copy name', icon: 'copy', run: () => post('copy', { text: name }) },
         ...(isHead ? [] : [{ label: 'Delete…', danger: true, icon: 'trash', run: () => post('deleteBranch', { kind: 'local', name }) }]),
@@ -1339,7 +1362,10 @@
           { label: 'Prune stale worktrees', icon: 'sync', run: () => post('pruneWorktrees') },
         ];
       case 'stashes':
-        return [{ label: 'Stash changes…', icon: 'archive', run: () => post('stashSave') }];
+        return [
+          { label: 'Stash changes…', icon: 'archive', run: () => post('stashSave') },
+          { label: 'Apply patch…', icon: 'file-code', run: () => post('applyPatch') },
+        ];
     }
     return [];
   }
@@ -1352,7 +1378,14 @@
       ...(ds.status !== 'D' ? [{ label: 'Open file', icon: 'go-to-file', run: () => post('openFile', { path: ds.path }) }] : []),
       { label: 'File history', icon: 'history', run: () => post('fileHistory', { path: ds.path }) },
       { label: 'Copy path', icon: 'copy', run: () => post('copy', { text: ds.path }) },
-      ...(wip && ds.status !== 'D' ? ignoreItems(ds.path) : []),
+      ...(S.integration && !wip && ds.status !== 'D' && /^[0-9a-f]{40}$/.test(ds.right || '')
+        ? [
+            '-',
+            { label: `Open file on ${PROVIDER[S.integration.provider].name}`, icon: PROVIDER[S.integration.provider].icon, run: () => post('hostLink', { what: 'file', action: 'open', sha: ds.right, path: ds.path }) },
+            { label: 'Copy permalink', icon: 'link', run: () => post('hostLink', { what: 'file', action: 'copy', sha: ds.right, path: ds.path }) },
+          ]
+        : []),
+      ...(wip &&ds.status !== 'D' ? ignoreItems(ds.path) : []),
     ];
   }
 
