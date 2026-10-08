@@ -1,0 +1,88 @@
+# Builds, tests and publishes gitSt8 to the VS Code Marketplace.
+#
+# Release: bump "version" in package.json, commit, then push a matching tag:
+#   git tag v0.0.3 && git push origin v0.0.3
+# Manual run (Actions tab → "Publish extension" → Run workflow) builds the .vsix only,
+# unless "publish" is ticked.
+#
+# Needs the repository secret VSCE_PAT: an Azure DevOps personal access token with
+# organization "All accessible organizations" and scope "Marketplace → Manage".
+
+name: Publish extension
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish to the Marketplace (otherwise only build the .vsix)
+        type: boolean
+        default: false
+
+permissions:
+  contents: write # create the GitHub release
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      PUBLISH: ${{ github.event_name == 'push' || inputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Check release metadata
+        if: env.PUBLISH == 'true'
+        run: |
+          node -e '
+            const p = require("./package.json");
+            const errors = [];
+            if (!p.publisher || p.publisher === "local") errors.push("package.json: set \"publisher\" to your Marketplace publisher ID");
+            if (!p.repository) errors.push("package.json: add a \"repository\" field");
+            const tag = process.env.GITHUB_REF_TYPE === "tag" ? process.env.GITHUB_REF_NAME : null;
+            if (tag && tag !== "v" + p.version) errors.push(`tag ${tag} does not match package.json version ${p.version}`);
+            errors.forEach(e => console.log("::error::" + e));
+            process.exit(errors.length ? 1 : 0);
+          '
+
+      - name: Package
+        id: package
+        run: |
+          VSIX="gitst8-$(node -p "require('./package.json').version").vsix"
+          # Relative links and images in README.md point at this commit on GitHub.
+          npx vsce package --out "$VSIX" \
+            --baseContentUrl "https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_SHA" \
+            --baseImagesUrl "https://github.com/$GITHUB_REPOSITORY/raw/$GITHUB_SHA"
+          echo "vsix=$VSIX" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.vsix }}
+          path: ${{ steps.package.outputs.vsix }}
+
+      # Publishes the exact file that was tested and packaged above.
+      - name: Publish to the Marketplace
+        if: env.PUBLISH == 'true'
+        run: npx vsce publish --packagePath "${{ steps.package.outputs.vsix }}"
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+
+      - name: Create GitHub release
+        if: github.event_name == 'push'
+        run: gh release create "$GITHUB_REF_NAME" "${{ steps.package.outputs.vsix }}" --title "$GITHUB_REF_NAME" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}

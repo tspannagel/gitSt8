@@ -5,9 +5,10 @@ gitSt8 is a VS Code extension: a single webview (bottom panel by default) for ad
 ## Commands
 
 ```sh
-npm install        # dev deps only (typescript, @types/vscode, @types/node); no runtime deps
+npm install        # dev deps only (typescript, @types/vscode, @types/node, @vscode/vsce); no runtime deps
 npm run compile    # tsc -> out/
 npm test           # compile + node:test on out/test/**/*.test.js (unit + real-git integration tests)
+npm run package    # vsce package -> .vsix; release via .github/workflows/publish.yml (tag v<version>)
 ```
 
 - Node is installed system-wide at `C:\Program Files\nodejs`. Shells started before the install may not have it on PATH: prefix with `$env:Path = "C:\Program Files\nodejs;$env:Path"`.

@@ -6,3 +6,5 @@ tsconfig.json
 CLAUDE.md
 **/*.map
 **/*.vsix
+.gitignore
+.github/**

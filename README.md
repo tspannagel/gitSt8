@@ -30,7 +30,7 @@ gitSt8 is not on the Marketplace yet. Pick one of these:
 | Option | Steps |
 | --- | --- |
 | Try it without installing | Run `npm install` once, open this folder in VS Code and press `F5`. A second window (*Extension Development Host*) starts with gitSt8 loaded. |
-| Install from source | Run `npm install && npm run compile`, create a link to this folder in your extensions directory, then restart VS Code. Windows: `New-Item -ItemType Junction -Path "$env:USERPROFILE\.vscode\extensions\local.gitst8-0.0.2" -Target "<path to this folder>"`. macOS/Linux: `ln -s "<path to this folder>" ~/.vscode/extensions/local.gitst8-0.0.2` |
+| Install from source | Run `npm install && npm run compile`, create a link to this folder in your extensions directory, then restart VS Code. Windows: `New-Item -ItemType Junction -Path "$env:USERPROFILE\.vscode\extensions\tisp.gitst8-0.0.2" -Target "<path to this folder>"`. macOS/Linux: `ln -s "<path to this folder>" ~/.vscode/extensions/tisp.gitst8-0.0.2` |
 
 ### Open it
 
@@ -352,9 +352,10 @@ Then click **Continue**, or **Skip commit** (rebase / cherry-pick / revert), or 
 The extension is TypeScript (strict mode) with no runtime dependencies. You need Node.js 20+.
 
 ```sh
-npm install      # TypeScript and type definitions only
+npm install      # TypeScript, type definitions and vsce (all dev-only)
 npm run watch    # compile on save (F5 starts this automatically)
 npm test         # compile, then run unit + git integration tests (node:test)
+npm run package  # build gitst8-<version>.vsix
 ```
 
 Press `F5` (**Run gitSt8**) to start a development window with your other extensions disabled. Press `Ctrl+R` there to reload after a change. Changes to `package.json` need a full restart of the debug session.
@@ -379,3 +380,19 @@ Design notes:
 - **Messages.** The webview talks to the extension through `postMessage`. A message `{type: 'x', …}` is handled by `RepoPanel.on_x`.
 - **Icons** come from VS Code's bundled `codicon.ttf`, loaded through the webview's resource roots. Code points live in `ICONS` in `media/main.js`.
 - **Providers** implement `ProviderClient` (`pullRequests`, `statuses`) and never import `vscode`, so they can be tested with plain Node. The graph is posted first; PRs and CI status follow in a separate `integration` message, so a slow or unreachable service never delays the graph.
+
+### Releasing
+
+[`.github/workflows/publish.yml`](.github/workflows/publish.yml) tests, packages and publishes the extension.
+
+1. One-time setup: add the repository secret `VSCE_PAT`: an Azure DevOps personal access token for *All accessible organizations* with the scope *Marketplace → Manage*.
+2. Bump `version` in package.json and commit.
+3. Push a matching tag: `git tag v0.0.3 && git push origin v0.0.3`.
+
+The workflow refuses to publish when the tag and the version differ or the metadata is incomplete. It publishes the `.vsix` it just tested, attaches it to a GitHub release and keeps it as a build artifact. To build a `.vsix` without publishing, run the workflow manually from the Actions tab and leave *publish* unticked.
+
+---
+
+## License
+
+[MIT](LICENSE.md) © 2026 Tim Spannagel

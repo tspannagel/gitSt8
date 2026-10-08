@@ -3,8 +3,16 @@
   "displayName": "gitSt8",
   "description": "One view for advanced git workflows: graph history, search, fetch/prune, branch, merge, rebase (incl. interactive), stacks, worktrees, tags, reflog undo, compare and diff.",
   "version": "0.0.2",
-  "publisher": "local",
-  "license": "UNLICENSED",
+  "publisher": "tisp",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tspannagel/gitSt8.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tspannagel/gitSt8/issues"
+  },
+  "homepage": "https://github.com/tspannagel/gitSt8#readme",
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -17,7 +25,8 @@
     "compile": "tsc -p .",
     "watch": "tsc -watch -p .",
     "test": "tsc -p . && node --test \"out/test/**/*.test.js\"",
-    "vscode:prepublish": "npm run compile"
+    "vscode:prepublish": "npm run compile",
+    "package": "vsce package"
   },
   "extensionDependencies": [
     "vscode.git"
@@ -194,6 +203,7 @@
   "devDependencies": {
     "@types/node": "^20.19.43",
     "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^4.0.0",
     "typescript": "^5.9.3"
   }
 }
