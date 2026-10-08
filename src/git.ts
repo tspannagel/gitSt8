@@ -1,6 +1,7 @@
 import * as cp from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import { FileDiff, parseDiff } from './hunks';
 
 const FS = '\x1f';
 const RS = '\x1e';
@@ -561,6 +562,21 @@ export class GitCli {
       if (peeled || !tags[name]) tags[name] = sha;
     }
     return tags;
+  }
+
+  /** Hunks of one tracked file: working tree vs index, or (staged) index vs HEAD. */
+  async fileHunks(relPath: string, staged: boolean): Promise<FileDiff> {
+    const args = ['--literal-pathspecs', 'diff', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', '-U3'];
+    if (staged) args.push('--cached');
+    return parseDiff(await this.run([...args, '--', relPath]));
+  }
+
+  /** Applies a patch from buildPatch(): stage, `reverse` + `cached` = unstage, `reverse` alone = discard from the working tree. */
+  async applyPatch(patch: string, mode: { cached: boolean; reverse: boolean }): Promise<void> {
+    const args = ['apply', '--whitespace=nowarn'];
+    if (mode.cached) args.push('--cached');
+    if (mode.reverse) args.push('--reverse');
+    await this.run([...args, '-'], { input: patch });
   }
 }
 

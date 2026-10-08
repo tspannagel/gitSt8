@@ -13,7 +13,7 @@
 
   // Code points of VS Code's bundled codicon font (loaded by the extension).
   const ICONS = {
-    add: 0xea60, archive: 0xea98, 'arrow-down': 0xea9a, 'arrow-up': 0xeaa1, check: 0xeab2, 'chevron-down': 0xeab4,
+    add: 0xea60, archive: 0xea98, 'arrow-down': 0xea9a, 'arrow-up': 0xeaa1, check: 0xeab2, 'chevron-down': 0xeab4, 'chevron-right': 0xeab6,
     'circle-filled': 0xea71, 'circle-outline': 0xeabc, 'circle-slash': 0xeabd, 'clear-all': 0xeabf, close: 0xea76,
     cloud: 0xebaa, 'cloud-download': 0xeac2, 'cloud-upload': 0xeac3, copy: 0xebcc, discard: 0xeae2, edit: 0xea73,
     ellipsis: 0xea7c, filter: 0xeaf1, folder: 0xea83, 'folder-opened': 0xeaf7, 'git-branch': 0xec6f,
@@ -80,7 +80,19 @@
           S.details = m.data.wip;
           renderDetails();
         }
+        refreshHunks();
         break;
+      case 'hunks': {
+        const key = hunkKey(m.staged, m.path);
+        if (!hunkOpen[key]) break;
+        hunkData[key] = m.file;
+        const sel = hunkSel[key];
+        const cur = sel && m.file.hunks[sel.hunk];
+        if (sel && (!cur || hunkSig(cur) !== sel.sig)) delete hunkSel[key]; // the diff changed under the selection
+        const view = [...document.querySelectorAll('.hunkview')].find(v => v.dataset.key === key);
+        if (view) view.innerHTML = hunkViewHtml(key, m.staged);
+        break;
+      }
       case 'reset':
         S.selected = S.anchor = S.details = S.inline = S.highlight = null;
         S.multi = [];
@@ -97,6 +109,7 @@
         }
         S.details = m.details;
         renderDetails();
+        refreshHunks();
         break;
       case 'reveal':
         if (m.path !== undefined) S.highlight = m.path || null;
@@ -677,7 +690,7 @@
    * @param {string|null} right diff right ref, null = working tree
    * @param {{act: string, icon: string, title: string, when?: (f) => boolean}[]} [actions] per-file buttons
    */
-  function fileList(files, left, right, actions = []) {
+  function fileList(files, left, right, actions = [], hunkMode = null) {
     if (!files.length) return '<div class="empty">No file changes.</div>';
     const hl = S.highlight ? S.highlight.toLowerCase() : null;
     const isHit = f => hl && (f.path.toLowerCase().includes(hl) || (f.oldPath || '').toLowerCase().includes(hl));
@@ -688,11 +701,115 @@
         const dir = i >= 0 ? f.path.slice(0, i + 1) : '';
         const base = f.path.slice(i + 1);
         const rename = f.oldPath && f.oldPath !== f.path ? ` <span class="dir">← ${esc(f.oldPath)}</span>` : '';
+        const canHunks = hunkMode && f.status !== 'U' && f.status !== '!';
+        const hkey = hunkKey(hunkMode === 'staged', f.path);
+        const open = canHunks && hunkOpen[hkey];
         return `<li class="${isHit(f) ? 'hl' : ''}" data-path="${esc(f.path)}" data-old="${esc(f.oldPath || '')}" data-left="${esc(left)}" data-right="${esc(right || '')}" data-status="${f.status}" title="Open diff (right-click for more)">
+          ${hunkMode ? `<span class="hchev">${canHunks ? `<button class="icon" data-hunktoggle="${hunkMode === 'staged' ? 's' : 'u'}" title="${open ? 'Hide' : 'Show'} hunks (stage parts of this file)" aria-expanded="${!!open}">${ic(open ? 'chevron-down' : 'chevron-right', 'xs')}</button>` : ''}</span>` : ''}
           <span class="st st-${f.status}">${f.status}</span><span class="fname">${esc(base)} <span class="dir">${esc(dir)}</span>${rename}</span>
-          ${actions.length ? `<span class="factions">${actions.filter(a => !a.when || a.when(f)).map(a => `<button class="icon" data-fileact="${a.act}" title="${esc(a.title)}">${ic(a.icon)}</button>`).join('')}</span>` : ''}</li>`;
+          ${actions.length ? `<span class="factions">${actions.filter(a => !a.when || a.when(f)).map(a => `<button class="icon" data-fileact="${a.act}" title="${esc(a.title)}">${ic(a.icon)}</button>`).join('')}</span>` : ''}</li>${open ? `<li class="hunkview" data-key="${esc(hkey)}" data-path="${esc(f.path)}" data-staged="${hunkMode === 'staged' ? 1 : ''}">${hunkViewHtml(hkey, hunkMode === 'staged')}</li>` : ''}`;
       })
       .join('')}</ul>`;
+  }
+
+  // ---- hunk and line staging (inline diff under a file row)
+  const hunkOpen = {}; // key -> true while a file's hunks are expanded
+  const hunkData = {}; // key -> FileDiff from the extension
+  const hunkSel = {}; // key -> { hunk, sig, lines: Set, anchor }
+  const hunkKey = (staged, path) => (staged ? 's:' : 'u:') + path;
+  const hunkSig = h => `${h.oldStart},${h.oldLines},${h.newStart},${h.newLines}`;
+
+  function hunkViewHtml(key, staged) {
+    const file = hunkData[key];
+    if (!file) return '<div class="empty">Loading…</div>';
+    if (file.binary) return '<div class="empty">Binary file: stage or unstage the whole file.</div>';
+    if (!file.hunks.length) return '<div class="empty">No textual changes (for example only a mode change).</div>';
+    const sel = hunkSel[key];
+    return file.hunks
+      .map((h, hi) => {
+        const mine = sel && sel.hunk === hi && sel.lines.size ? sel : null;
+        let o = h.oldStart;
+        let n = h.newStart;
+        const rows = h.lines
+          .map((l, li) => {
+            const ol = l.kind === '+' ? '' : o++;
+            const nl = l.kind === '-' ? '' : n++;
+            const txt = l.text.replace(/\r$/, '');
+            return `<div class="dl dl${l.kind === ' ' ? 'c' : l.kind === '+' ? 'a' : 'd'} ${mine && mine.lines.has(li) ? 'sel' : ''}" data-h="${hi}" data-l="${li}"><span class="ln">${ol}</span><span class="ln">${nl}</span><span class="sg">${l.kind === ' ' ? '' : l.kind}</span><span class="tx">${esc(txt)}${l.text.endsWith('\r') ? '<span class="eol">CR</span>' : ''}${l.noEol ? '<span class="eol">no newline at end of file</span>' : ''}</span></div>`;
+          })
+          .join('');
+        const btn = (act, label, icon, cls = '') => `<button class="${cls}" data-hact="${act}" data-h="${hi}">${ic(icon, 'xs')}${label}</button>`;
+        const hb = staged ? btn('unstage', 'Unstage hunk', 'remove') : btn('stage', 'Stage hunk', 'add') + btn('discard', 'Discard hunk', 'discard', 'danger');
+        const sb = !mine
+          ? ''
+          : staged
+            ? btn('unstage-sel', `Unstage selected lines (${mine.lines.size})`, 'remove')
+            : btn('stage-sel', `Stage selected lines (${mine.lines.size})`, 'add') + btn('discard-sel', `Discard selected lines (${mine.lines.size})`, 'discard', 'danger');
+        return `<div class="hunk"><div class="hunk-head"><span class="hh">${esc(h.header)}</span><span class="spacer"></span>${sb}${hb}</div><div class="hunk-body">${rows}</div></div>`;
+      })
+      .join('');
+  }
+
+  function hunkClick(e, view) {
+    const t = e.target;
+    const key = view.dataset.key;
+    const staged = !!view.dataset.staged;
+    const file = hunkData[key];
+    if (!file) return;
+    const btn = t.closest('[data-hact]');
+    if (btn) {
+      const hi = +btn.dataset.h;
+      const h = file.hunks[hi];
+      const [act, sel] = btn.dataset.hact.split('-');
+      const lines = sel && hunkSel[key]?.hunk === hi ? [...hunkSel[key].lines].sort((a, b) => a - b) : undefined;
+      if (sel && !lines) return;
+      delete hunkSel[key];
+      return post('applyHunks', { path: view.dataset.path, staged, hunk: hi, lines, sig: hunkSig(h), action: act });
+    }
+    const row = t.closest('.dl');
+    if (!row || row.classList.contains('dlc')) return;
+    const hi = +row.dataset.h;
+    const li = +row.dataset.l;
+    let sel = hunkSel[key];
+    if (!sel || sel.hunk !== hi) sel = hunkSel[key] = { hunk: hi, sig: hunkSig(file.hunks[hi]), lines: new Set(), anchor: li };
+    if (e.shiftKey && sel.anchor !== undefined) {
+      const [a, b] = [Math.min(sel.anchor, li), Math.max(sel.anchor, li)];
+      file.hunks[hi].lines.forEach((l, i) => {
+        if (i >= a && i <= b && l.kind !== ' ') sel.lines.add(i);
+      });
+      window.getSelection()?.removeAllRanges();
+    } else {
+      if (!sel.lines.delete(li)) sel.lines.add(li);
+      sel.anchor = li;
+    }
+    view.innerHTML = hunkViewHtml(key, staged);
+  }
+
+  function toggleHunks(key) {
+    if (hunkOpen[key]) {
+      delete hunkOpen[key];
+      delete hunkSel[key];
+    } else {
+      hunkOpen[key] = true;
+      post('fileHunks', { path: key.slice(2), staged: key[0] === 's' });
+    }
+    renderDetails();
+  }
+
+  /** Re-requests the hunks of every expanded file; drops files that left the lists. Call after the working tree state changed. */
+  function refreshHunks() {
+    const d = S.details;
+    if (d?.kind !== 'wip') return;
+    const live = new Set();
+    for (const f of d.staged) if (f.status !== '!') live.add(hunkKey(true, f.path));
+    for (const f of d.unstaged) if (f.status !== 'U' && f.status !== '!') live.add(hunkKey(false, f.path));
+    for (const key of Object.keys(hunkOpen)) {
+      if (!live.has(key)) {
+        delete hunkOpen[key];
+        delete hunkData[key];
+        delete hunkSel[key];
+      } else post('fileHunks', { path: key.slice(2), staged: key[0] === 's' });
+    }
   }
 
   /** Staged / unstaged changes with a commit box. Keeps the draft message and caret across refreshes. */
@@ -717,14 +834,14 @@
         ${d.conflicts.length ? `<div class="grp-head conflict">Merge conflicts (${d.conflicts.length})</div>
           ${fileList(d.conflicts, d.headRef, null, [{ act: 'open', icon: 'go-to-file', title: 'Open file' }, { act: 'resolved', icon: 'check', title: 'Mark resolved (stage)' }])}` : ''}
         <div class="grp-head">Staged changes (${nStaged}) ${nStaged ? '<button class="link" data-wip="unstageAll">unstage all</button>' : ''}</div>
-        ${nStaged ? fileList(d.staged, d.headRef, 'INDEX', [{ act: 'unstage', icon: 'remove', title: 'Unstage' }]) : '<div class="empty">Nothing staged.</div>'}
+        ${nStaged ? fileList(d.staged, d.headRef, 'INDEX', [{ act: 'unstage', icon: 'remove', title: 'Unstage' }], 'staged') : '<div class="empty">Nothing staged.</div>'}
         <div class="grp-head">Changes (${nUnstaged}) ${nUnstaged ? '<button class="link" data-wip="stageAll">stage all</button> <button class="link danger" data-wip="discardAll">discard all…</button>' : ''}</div>
         ${nUnstaged
           ? fileList(d.unstaged, 'INDEX', null, [
               { act: 'open', icon: 'go-to-file', title: 'Open file', when: f => f.status !== 'D' },
               { act: 'discard', icon: 'discard', title: 'Discard changes' },
               { act: 'stage', icon: 'add', title: 'Stage' },
-            ])
+            ], 'unstaged')
           : '<div class="empty">Working tree clean.</div>'}
       </div></div>`;
     const box = $('#commitMsg');
@@ -1442,6 +1559,14 @@
         return;
       }
       return post(wipBtn.dataset.wip);
+    }
+    const hunkView = t.closest('.hunkview');
+    if (hunkView) return hunkClick(e, hunkView);
+    const hunkToggle = t.closest('[data-hunktoggle]');
+    if (hunkToggle) {
+      const li = hunkToggle.closest('li');
+      const key = hunkKey(hunkToggle.dataset.hunktoggle === 's', li.dataset.path);
+      return toggleHunks(key);
     }
     const fileAct = t.closest('[data-fileact]');
     if (fileAct) {
