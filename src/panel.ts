@@ -1557,7 +1557,7 @@ export class RepoPanel {
     if (name) await this.runOp(`Branch from ${m.ref}`, () => this.git().run(['stash', 'branch', name, m.ref]));
   }
 
-  // ---------------------------------------------------------------- bisect
+  // ---- bisect
 
   /** Starts a bisect between a known bad and a known good commit; git checks out the first candidate. */
   async on_bisectStart(m: Msg) {
@@ -1585,7 +1585,7 @@ export class RepoPanel {
     await this.runOp('Reset bisect', () => this.git().run(['bisect', 'reset']));
   }
 
-  // ---------------------------------------------------------------- generate commit message
+  // ---- generate commit message
 
   private aiCts?: vscode.CancellationTokenSource;
   private aiAvailable?: boolean; // cached; null/undefined = not checked yet

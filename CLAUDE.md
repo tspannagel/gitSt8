@@ -24,8 +24,9 @@ npm run package    # vsce package -> .vsix; release via .github/workflows/publis
 | `src/panel.ts` | `RepoPanel`: webview host (WebviewView in panel or WebviewPanel in editor, via a `Host` wrapper), state collection, every action handler |
 | `src/git.ts` | `GitCli` wrapper + parsers. No `vscode` import |
 | `src/graph.ts` | commit graph lane layout. No `vscode` import |
+| `src/{bisect,submodules,lfs,logFilter,signature,hunks,release,prdraft,commitPrompt}.ts` | pure parsers/builders per feature (bisect state, submodule/LFS status, history filter args, signature codes, diff hunks + partial patches, semver/changelog, PR title/body, LLM commit prompt). No `vscode` import; each has a test file |
 | `src/integration.ts` | GitHub/Azure DevOps: remote detection, auth (VS Code accounts + Azure PAT in SecretStorage), caching/TTL |
-| `src/providers/*` | API clients and mappers (`github.ts` GraphQL, `azure.ts` REST 7.1, `detect.ts`, `ci.ts`, `http.ts`). **Must not import `vscode`**, so they stay unit-testable |
+| `src/providers/*` | API clients and mappers (`github.ts` GraphQL, `azure.ts` REST 7.1, `detect.ts`, `links.ts` web URLs, `ci.ts`, `http.ts`). **Must not import `vscode`**, so they stay unit-testable |
 | `src/types/git.d.ts` | hand-written subset of the vscode.git API. Extend it when using more of the API |
 | `media/main.js`, `media/main.css` | webview UI, plain JS (`// @ts-nocheck`), no framework |
 

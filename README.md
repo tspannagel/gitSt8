@@ -65,7 +65,7 @@ Prefer an editor tab? Set `"gitst8.location": "editor"`. You can also drag the p
    sidebar                    commit graph                        details pane
 ```
 
-**Toolbar.** The repository picker comes first (see [multiple repositories](#multiple-repositories)), then the current branch (shown in red when HEAD is detached). Next come the main actions, the **All branches** toggle, search, and refresh. When space is tight, buttons shrink to icons; hover to see what they do.
+**Toolbar.** The repository picker comes first (see [multiple repositories](#multiple-repositories)), then the current branch (shown in red when HEAD is detached). Next come the main actions, the **All branches** toggle, **Filter** (see [search history](#search-history)), search, and refresh. When space is tight, buttons shrink to icons; hover to see what they do.
 
 **Sidebar.** Collapsible sections with a color per kind of ref. Click an entry to jump to its commit in the graph, double-click to check it out (or to open a worktree), and right-click for everything else. Each section header has a **⋯** menu with section-wide actions. The filter box at the top filters every section by name.
 
@@ -77,8 +77,10 @@ Prefer an editor tab? Set `"gitst8.location": "editor"`. You can also drag the p
 | **Tags** | Tags, newest version first (`v1.10` sorts above `v1.9`) | Solid: annotated · faded: lightweight · `local only` / `remote only` / `differs` after comparing with a remote |
 | **Worktrees** | All worktrees of the repository | Root icon: this window · lock: locked · `prunable`: folder is gone |
 | **Stashes** | Stash entries with their messages | |
+| **Submodules** | Submodules (only when the repository has any) | `not initialized` · `modified` (checked-out commit differs from the recorded one) · `conflict` |
+| **LFS** | Git LFS files (only when the repository uses LFS) | `N not downloaded`: pointer files whose content isn't fetched yet |
 
-**Commit graph.** Every branch is drawn with its own lane. Labels on a commit show the local branches (green), remote branches (blue), tags (amber) and stashes (pink) that point at it. When your working tree has changes, an **Uncommitted changes** row sits on top. History loads in pages of 400 commits; use **Load more** at the bottom.
+**Commit graph.** Every branch is drawn with its own lane. Labels on a commit show the local branches (green), remote branches (blue), tags (amber) and stashes (pink) that point at it. During a [bisect](#find-a-bad-commit-with-bisect), good, bad, skipped and next-to-test commits get markers too. When your working tree has changes, an **Uncommitted changes** row sits on top. History loads in pages of 400 commits; use **Load more** at the bottom.
 
 **Commit details** open inline, right under the commit you click, so the commit box stays where it is. Click the commit again to close them. Signed commits show a badge next to the author (verified, unverified, bad, expired or revoked, or "can't verify" when git cannot check the signature, e.g. gpg is missing or `gpg.ssh.allowedSignersFile` is not set); hover it for the signer and key. Unsigned commits show nothing.
 
