@@ -97,6 +97,11 @@
         "title": "File History in gitSt8",
         "category": "gitSt8",
         "icon": "$(history)"
+      },
+      {
+        "command": "gitst8.addGitkeep",
+        "title": "Add .gitkeep",
+        "category": "gitSt8"
       }
     ],
     "menus": {
@@ -131,12 +136,21 @@
           "command": "gitst8.fileHistory",
           "group": "gitst8",
           "when": "resourceScheme == file"
+        },
+        {
+          "command": "gitst8.addGitkeep",
+          "group": "gitst8",
+          "when": "resourceScheme == file && explorerResourceIsFolder"
         }
       ],
       "commandPalette": [
         {
           "command": "gitst8.revealLineCommit",
           "when": "editorIsOpen"
+        },
+        {
+          "command": "gitst8.addGitkeep",
+          "when": "false"
         }
       ]
     },

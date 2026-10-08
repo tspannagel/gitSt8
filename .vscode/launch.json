@@ -9,6 +9,7 @@
         "--extensionDevelopmentPath=${workspaceFolder}",
         "--profile-temp"
       ],
+      "trace": true,
       "outFiles": ["${workspaceFolder}/out/**/*.js"],
       "preLaunchTask": "npm: watch"
     },

@@ -79,6 +79,37 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       await panel.on_search({ kind: 'path', value: t.rel });
     }),
 
+    // Explorer → folder → "Add .gitkeep". Git doesn't track empty folders; an empty .gitkeep keeps the
+    // folder in the repository until real files arrive. Works on a multi-selection, skips existing ones.
+    vscode.commands.registerCommand('gitst8.addGitkeep', async (arg: unknown, all?: unknown) => {
+      const folders = (Array.isArray(all) && all.length ? all : [arg]).filter((u): u is vscode.Uri => u instanceof vscode.Uri && u.scheme === 'file');
+      if (!folders.length) return vscode.window.showWarningMessage('gitSt8: right-click a folder in the Explorer to add a .gitkeep.');
+      let created = 0;
+      const failed: string[] = [];
+      for (const dir of folders) {
+        const target = vscode.Uri.joinPath(dir, '.gitkeep');
+        try {
+          if ((await vscode.workspace.fs.stat(dir)).type !== vscode.FileType.Directory) continue;
+          try {
+            await vscode.workspace.fs.stat(target);
+            continue; // already there
+          } catch {
+            /* not there yet */
+          }
+          await vscode.workspace.fs.writeFile(target, new Uint8Array());
+          created++;
+        } catch (e) {
+          failed.push(`${path.basename(dir.fsPath)}: ${e instanceof Error ? e.message : e}`);
+        }
+      }
+      if (failed.length) vscode.window.showWarningMessage(`gitSt8: could not add .gitkeep (${failed.join('; ')}).`);
+      const skipped = folders.length - created - failed.length;
+      vscode.window.setStatusBarMessage(
+        `gitSt8: added .gitkeep to ${created} folder(s)${skipped ? `, ${skipped} already had one` : ''}`,
+        3000
+      );
+    }),
+
     vscode.commands.registerCommand('gitst8.signInGitHub', () => integrations.signIn('github')),
     vscode.commands.registerCommand('gitst8.signInAzure', () => integrations.signIn('azure')),
     vscode.commands.registerCommand('gitst8.setAzurePat', async () => {

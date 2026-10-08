@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as crypto from 'crypto';
-import { Commit, FileChange, GitCli, Head, LocalBranch, OpState, Query, QueryKind, Refs, StackEntry, StatusEntry, Worktree, EMPTY_TREE, splitRemoteRef } from './git';
+import { Commit, FileChange, GitCli, Head, LocalBranch, OpState, Query, QueryKind, Refs, StackEntry, StatusEntry, Worktree, EMPTY_TREE, appendIgnore, ignorePattern, splitRemoteRef } from './git';
 import { layout } from './graph';
 import { Integrations, IntegrationState } from './integration';
 import { ProviderId } from './providers/types';
@@ -670,6 +670,38 @@ export class RepoPanel {
     if (!ok) return;
     const args = m.untracked ? ['clean', '-f', '-q', '--', ...m.paths] : ['restore', '--', ...m.paths];
     await this.runOp('Discard', () => this.git().run(args));
+  }
+
+  /**
+   * Adds an ignore rule for a changed file. m.kind: file | dir | ext (see ignorePattern); m.local: write to
+   * .git/info/exclude (this clone only) instead of .gitignore. Afterwards, offers to untrack files that are
+   * tracked but now ignored, since ignore rules don't apply to them.
+   */
+  async on_ignore(m: Msg) {
+    const pattern = ignorePattern(String(m.path), m.kind);
+    if (!pattern) return;
+    const root = this.requireRoot();
+    const git = this.git();
+    const file = m.local ? path.resolve(root, (await git.run(['rev-parse', '--git-path', 'info/exclude'])).trim()) : path.join(root, '.gitignore');
+    const trackedIgnored = async () => (await git.tryRun(['ls-files', '-z', '--cached', '--ignored', '--exclude-standard'])).split('\0').filter(Boolean);
+    const before = new Set(await trackedIgnored());
+    const done = await this.runOp(`Ignore ${pattern}`, async () => {
+      const content = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+      const next = appendIgnore(content, [pattern]);
+      if (next === null) return;
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, next);
+    });
+    if (!done) return;
+    const tracked = (await trackedIgnored()).filter(f => !before.has(f));
+    if (!tracked.length) return;
+    const list = tracked.slice(0, 15).join('\n') + (tracked.length > 15 ? `\n… and ${tracked.length - 15} more` : '');
+    const ok = await this.confirm(
+      `${tracked.length} tracked file(s) match the new rule. Stop tracking them?`,
+      `Ignore rules don't apply to files git already tracks. "git rm --cached" removes them from the index (the next commit deletes them from the repository) but keeps them on disk.\n\n${list}`,
+      'Stop Tracking'
+    );
+    if (ok) await this.runOp('Stop tracking ignored files', () => git.run(['rm', '--cached', '-q', '--pathspec-from-file=-', '--pathspec-file-nul'], { input: tracked.join('\0') }));
   }
 
   async on_commit(m: Msg) {

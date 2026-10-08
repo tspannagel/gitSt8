@@ -4,7 +4,7 @@ import * as cp from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { GitCli, splitRemoteRef } from '../git';
+import { GitCli, appendIgnore, ignorePattern, splitRemoteRef } from '../git';
 import { layout } from '../graph';
 
 // Integration tests against a real throwaway repository with a bare "remote".
@@ -92,6 +92,41 @@ test('defaultBase is cached per configured value and re-checked', async () => {
   assert.equal(await git.defaultBase('main'), 'main');
   assert.equal(await git.defaultBase(''), 'origin/main');
   assert.equal(await git.defaultBase('does-not-exist'), 'origin/main');
+});
+
+test('ignorePattern anchors and escapes paths', () => {
+  assert.equal(ignorePattern('src/out/app.log', 'file'), '/src/out/app.log');
+  assert.equal(ignorePattern('src/out/app.log', 'dir'), '/src/out/');
+  assert.equal(ignorePattern('src/out/app.log', 'ext'), '*.log');
+  assert.equal(ignorePattern('top.txt', 'dir'), null);
+  assert.equal(ignorePattern('.env', 'ext'), null);
+  assert.equal(ignorePattern('Makefile', 'ext'), null);
+  assert.equal(ignorePattern('a[1]/#notes*.md', 'file'), '/a\\[1\\]/\\#notes\\*.md');
+  assert.equal(ignorePattern('!bang', 'file'), '/\\!bang');
+});
+
+test('ignorePattern output really ignores the file (git check-ignore)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gitst8-ign-'));
+  try {
+    cp.execFileSync('git', ['init', '-q', dir]);
+    const names = ['a[1]/#notes*.md', 'sub dir/x.log', '!bang'];
+    fs.writeFileSync(path.join(dir, '.gitignore'), appendIgnore('', names.map(n => ignorePattern(n, 'file')!))!);
+    for (const n of names) {
+      const out = cp.execFileSync('git', ['-C', dir, 'check-ignore', '--no-index', '-v', n], { encoding: 'utf8' });
+      assert.match(out, /^\.gitignore:\d+:/, n);
+    }
+    // Wildcards were escaped: a sibling with a similar name is not ignored.
+    assert.throws(() => cp.execFileSync('git', ['-C', dir, 'check-ignore', '--no-index', 'a1/#notesX.md'], { stdio: 'pipe' }));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('appendIgnore skips existing lines and keeps line endings', () => {
+  assert.equal(appendIgnore('', ['/a']), '/a\n');
+  assert.equal(appendIgnore('node_modules', ['/a', '/a']), 'node_modules\n/a\n');
+  assert.equal(appendIgnore('x\r\n/a\r\n', ['/a', '*.log']), 'x\r\n/a\r\n*.log\r\n');
+  assert.equal(appendIgnore('/a\n', ['/a']), null);
 });
 
 test('splitRemoteRef prefers the longest remote name', () => {

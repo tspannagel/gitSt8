@@ -1231,13 +1231,31 @@
     return [];
   }
 
-  function fileMenu(ds) {
+  /** wip: the file is in the commit window's change lists, so it can be ignored. */
+  function fileMenu(ds, wip) {
     return [
       { header: ds.path },
       { label: 'Open diff', icon: 'git-compare', run: () => post('openDiff', { path: ds.path, oldPath: ds.old || undefined, left: ds.left, right: ds.right || null }) },
       ...(ds.status !== 'D' ? [{ label: 'Open file', icon: 'go-to-file', run: () => post('openFile', { path: ds.path }) }] : []),
       { label: 'File history', icon: 'history', run: () => post('fileHistory', { path: ds.path }) },
       { label: 'Copy path', icon: 'copy', run: () => post('copy', { text: ds.path }) },
+      ...(wip && ds.status !== 'D' ? ignoreItems(ds.path) : []),
+    ];
+  }
+
+  function ignoreItems(p) {
+    const name = p.slice(p.lastIndexOf('/') + 1);
+    const dir = p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '';
+    const dot = name.lastIndexOf('.');
+    const ext = dot > 0 && dot < name.length - 1 ? name.slice(dot) : '';
+    const ignore = (kind, local) => () => post('ignore', { path: p, kind, local });
+    return [
+      '-',
+      { header: 'Add to .gitignore' },
+      { label: `Ignore ${name}`, icon: 'circle-slash', run: ignore('file') },
+      ...(dir ? [{ label: `Ignore folder ${dir}/`, icon: 'circle-slash', run: ignore('dir') }] : []),
+      ...(ext ? [{ label: `Ignore all *${ext} files`, icon: 'circle-slash', run: ignore('ext') }] : []),
+      { label: `Exclude ${name} in this clone only (.git/info/exclude)`, icon: 'circle-slash', run: ignore('file', true) },
     ];
   }
 
@@ -1540,7 +1558,7 @@
     else if (item) items = refMenu(item.dataset.ref, item.dataset);
     else if (group) items = remoteMenu(group.dataset.remotegroup);
     else if (secHead) items = sectionMenu(secHead.parentElement.dataset.section);
-    else if (file) items = fileMenu(file.dataset);
+    else if (file) items = fileMenu(file.dataset, !!file.closest('.changes'));
     else if (tr) {
       const sha = tr.dataset.sha;
       if (S.multi.length > 1 && S.multi.includes(sha)) items = multiMenu(S.multi);

@@ -105,6 +105,17 @@ Prefer an editor tab? Set `"gitst8.location": "editor"`. You can also drag the p
 3. Click a staged file to diff HEAD ↔ index, or an unstaged file to diff index ↔ working tree.
 4. Type a message and press `Ctrl+Enter` (`Cmd+Enter` on macOS) or click the button.
 
+Right-click a changed file to ignore it:
+
+| Menu entry | Adds to | Pattern |
+| --- | --- | --- |
+| **Ignore ‹file›** | `.gitignore` at the repo root | `/path/to/file` (exact path, special characters escaped) |
+| **Ignore folder ‹dir›/** | `.gitignore` | `/path/to/dir/` |
+| **Ignore all \*.ext files** | `.gitignore` | `*.ext` (anywhere in the repo) |
+| **Exclude ‹file› in this clone only** | `.git/info/exclude` (not committed, not shared) | `/path/to/file` |
+
+Rules that are already in the file aren't added twice. Ignore rules don't apply to files git already tracks. If the new rule matches tracked files, gitSt8 lists them and offers **Stop tracking**: `git rm --cached` keeps the files on disk, and your next commit removes them from the repository.
+
 Options:
 
 - **Amend last commit** replaces the last commit and pre-fills its message.
@@ -180,6 +191,7 @@ Results show as a single line with a banner above. Files matching your search ar
 | --- | --- | --- |
 | **Show Line's Commit in gitSt8** | Editor right-click, `Ctrl+Alt+Shift+B` (`Cmd+Option+Shift+B` on macOS) | Finds the commit that last changed the line under the cursor (unsaved edits included), loads enough history to show it, and opens its details with the file highlighted |
 | **File History in gitSt8** | Editor, editor tab and Explorer right-click | Shows only the commits that touched that file (following renames) or folder |
+| **Add .gitkeep** | Explorer right-click on a folder (works on a multi-selection) | Creates an empty `.gitkeep` so git tracks the folder before it has real files. Folders that already have one are skipped |
 
 For inline blame annotations, use VS Code's built-in setting `git.blame.editorDecoration.enabled`. gitSt8 does not duplicate it.
 

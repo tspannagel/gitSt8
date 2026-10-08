@@ -570,6 +570,34 @@ export function splitRemoteRef(ref: string, remotes: string[]): { remote: string
   return remote ? { remote, branch: ref.slice(remote.length + 1) } : null;
 }
 
+/**
+ * Builds a root-anchored .gitignore pattern for a repo-relative path.
+ * kind: 'file' = exactly this path, 'dir' = its parent folder, 'ext' = every file with its extension (anywhere).
+ * Wildcards, a leading '#'/'!' and trailing spaces are escaped so the pattern matches the name literally.
+ */
+export function ignorePattern(relPath: string, kind: 'file' | 'dir' | 'ext'): string | null {
+  const p = relPath.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
+  const esc = (s: string) => s.replace(/[\\*?[\]]/g, c => '\\' + c).replace(/^([#!])/, '\\$1').replace(/ $/, '\\ ');
+  if (kind === 'file') return p ? '/' + p.split('/').map(esc).join('/') : null;
+  if (kind === 'dir') {
+    const dir = p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '';
+    return dir ? '/' + dir.split('/').map(esc).join('/') + '/' : null;
+  }
+  const name = p.slice(p.lastIndexOf('/') + 1);
+  const dot = name.lastIndexOf('.');
+  return dot > 0 && dot < name.length - 1 ? '*' + esc(name.slice(dot)) : null;
+}
+
+/** Appends lines to ignore-file content that it doesn't already contain; returns null if nothing changes. */
+export function appendIgnore(content: string, patterns: string[]): string | null {
+  const have = new Set(content.split(/\r?\n/).map(l => l.trim()));
+  const add = [...new Set(patterns)].filter(p => !have.has(p));
+  if (!add.length) return null;
+  const eol = content.includes('\r\n') ? '\r\n' : '\n';
+  const sep = content && !content.endsWith('\n') ? eol : '';
+  return content + sep + add.join(eol) + eol;
+}
+
 function parseRecords(out: string): string[][] {
   return out
     .split(RS)
