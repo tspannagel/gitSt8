@@ -2,7 +2,7 @@
   "name": "gitst8",
   "displayName": "gitSt8",
   "description": "One view for advanced git workflows: graph history, search, fetch/prune, branch, merge, rebase (incl. interactive), stacks, worktrees, tags, reflog undo, compare and diff.",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "publisher": "tisp",
   "license": "MIT",
   "repository": {

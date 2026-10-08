@@ -736,15 +736,31 @@ export class RepoPanel {
 
   async on_push() {
     const head = this.lastHead;
-    if (!head?.branch) return vscode.window.showWarningMessage('Cannot push a detached HEAD.');
-    await this.pushBranch(head.branch, false);
+    const branch = head?.branch;
+    const pick = await vscode.window.showQuickPick<PickItem>([
+        ...(branch
+          ? [
+              { label: `Push ${branch}`, description: 'current branch only', id: 'branch' },
+              { label: `Push ${branch} --follow-tags`, description: 'plus annotated tags on the pushed commits', id: 'follow' },
+              { label: `Push ${branch} and all tags`, description: 'plus every local tag (git push --tags)', id: 'all' },
+            ]
+          : []),
+        { label: 'Push all tags', description: 'tags only, no branch', id: 'tags' },
+      ],
+      { placeHolder: branch ? `Push ${branch}` : 'Detached HEAD: only tags can be pushed' }
+    );
+    if (!pick) return;
+    if (pick.id === 'tags') return this.on_pushAllTags();
+    if (!branch) return;
+    await this.pushBranch(branch, false, pick.id === 'follow' ? 'follow' : pick.id === 'all' ? 'all' : undefined);
   }
 
   async on_pushBranch(m: Msg) {
     await this.pushBranch(m.name, !!m.force);
   }
 
-  async pushBranch(name: string, force: boolean) {
+  /** tags: 'follow' = --follow-tags (annotated tags reachable from the pushed commits), 'all' = also push every tag. */
+  async pushBranch(name: string, force: boolean, tags?: 'follow' | 'all') {
     const b = this.localBranch(name);
     const upstream = b?.upstream && !b.gone ? this.splitUpstream(b.upstream) : null;
     const setUpstream = !upstream;
@@ -759,6 +775,18 @@ export class RepoPanel {
       return this.runOp(`Force push ${name}`, () => this.git().run([...args, target.remote, `${name}:${target.branch}`]), true);
     }
     const refspec = target.branch === name ? name : `${name}:${target.branch}`;
+    if (tags === 'follow') {
+      // The vscode.git API has no --follow-tags option, so this one goes through the CLI.
+      const args = ['push', '--follow-tags'];
+      if (setUpstream) args.push('-u');
+      return this.runOp(`Push ${name} --follow-tags`, () => this.git().run([...args, target.remote, `${name}:${target.branch}`]), true);
+    }
+    if (tags === 'all') {
+      return this.runOp(`Push ${name} and all tags`, async () => {
+        await this.requireRepo().push(target.remote, refspec, setUpstream);
+        await this.git().run(['push', target.remote, '--tags']);
+      }, true);
+    }
     await this.runOp(`Push ${name}`, () => this.requireRepo().push(target.remote, refspec, setUpstream), true);
   }
 
@@ -1479,7 +1507,7 @@ ${font ? `<style nonce="${nonce}">@font-face { font-family: "codicon"; font-disp
     <button class="tb primary-tb" data-cmd="openCommit" title="Staged/unstaged changes and commit"><i class="ci" data-icon="check"></i><span class="lbl">Commit</span></button>
     <button class="tb" data-cmd="fetch" title="Fetch all remotes and prune deleted branches"><i class="ci" data-icon="sync"></i><span class="lbl">Fetch</span></button>
     <button class="tb" data-cmd="pull" title="Pull current branch (rebase / ff-only / merge)"><i class="ci" data-icon="repo-pull"></i><span class="lbl">Pull</span></button>
-    <button class="tb" data-cmd="push" title="Push current branch"><i class="ci" data-icon="repo-push"></i><span class="lbl">Push</span></button>
+    <button class="tb" data-cmd="push" title="Push current branch, optionally with tags"><i class="ci" data-icon="repo-push"></i><span class="lbl">Push</span></button>
   </span>
   <span class="tgroup">
     <button class="tb" data-cmd="createBranch" title="New branch from HEAD"><i class="ci" data-icon="git-branch"></i><span class="lbl">Branch</span></button>
