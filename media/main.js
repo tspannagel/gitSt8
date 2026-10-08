@@ -24,7 +24,7 @@
     'debug-disconnect': 0xead0, milestone: 0xeb20, server: 0xeb50,
     github: 0xea84, 'azure-devops': 0xebe8, 'git-pull-request': 0xea64, 'git-pull-request-draft': 0xebdb,
     'pass-filled': 0xebb3, error: 0xea87, 'circle-large-outline': 0xebb5, skip: 0xec6a, 'sign-in': 0xea6f,
-    'debug-rerun': 0xebc0, rocket: 0xeb44,
+    'debug-rerun': 0xebc0, rocket: 0xeb44, 'file-submodule': 0xeaec, database: 0xeace,
   };
   const ic = (name, cls = '') => `<i class="ci ${cls}" aria-hidden="true">${ICONS[name] ? String.fromCharCode(ICONS[name]) : ''}</i>`;
   const fillIcons = (root = document) =>
@@ -240,7 +240,7 @@
 
   // ---- sidebar
 
-  const SECTION_ICONS = { stack: 'layers', local: 'git-branch', remote: 'cloud', tags: 'tag', worktrees: 'folder-opened', stashes: 'archive' };
+  const SECTION_ICONS = { stack: 'layers', local: 'git-branch', remote: 'cloud', tags: 'tag', worktrees: 'folder-opened', stashes: 'archive', submodules: 'file-submodule', lfs: 'database' };
 
   function section(id, title, count, inner, hasMenu = true) {
     const collapsed = S.collapsed[id];
@@ -338,6 +338,21 @@
       })
       .join('');
 
+    const smLabel = { uninitialized: 'not initialized', modified: 'modified', conflict: 'conflict' };
+    const smHtml = (d.submodules || [])
+      .filter(m => matchesSide(m.path + ' ' + m.name))
+      .map(m => {
+        const sh = x => (x ? x.slice(0, 7) : '-');
+        const tip = `${m.path}\n${m.url}${m.branch ? ' (' + m.branch + ')' : ''}\nrecorded ${sh(m.recorded)} · checked out ${sh(m.checkedOut)}`;
+        const pill = m.state === 'ok' ? '' : `<span class="pill ${m.state === 'conflict' ? 'gone' : ''}">${smLabel[m.state]}</span>`;
+        return `<div class="item" data-ref="submodule" data-path="${esc(m.path)}" data-state="${m.state}" title="${esc(tip)}">${ic('file-submodule', 'sm')}<span class="name">${esc(m.path)}</span><span class="meta">${pill}</span></div>`;
+      })
+      .join('');
+    const lfs = d.lfs;
+    const lfsHtml = lfs
+      ? `<div class="item" data-ref="lfs" title="LFS-tracked files (lfs ls-files)">${ic('database', 'sm')}<span class="name">${lfs.total} file${lfs.total === 1 ? '' : 's'} tracked</span><span class="meta">${lfs.missing ? `<span class="pill gone" title="only the pointer file is present; use Pull LFS files">${lfs.missing} not downloaded</span>` : 'all downloaded'}</span></div>`
+      : '';
+
     const stashHtml = d.stashes
       .map((s, i) => ({ s, i }))
       .filter(({ s }) => matchesSide(s.ref + ' ' + s.message))
@@ -350,6 +365,8 @@
       section('remote', 'Remotes', remote.length, remoteHtml) +
       section('tags', tagTitle, tags.length, tagItems.join('')) +
       section('worktrees', 'Worktrees', (d.worktrees || []).length, wtHtml) +
+      ((d.submodules || []).length ? section('submodules', 'Submodules', d.submodules.length, smHtml) : '') +
+      (lfs ? section('lfs', 'LFS', lfs.total, lfsHtml) : '') +
       section('stashes', 'Stashes', d.stashes.length, stashHtml);
   }
 
@@ -1170,6 +1187,20 @@
             ]),
       ];
     }
+    if (kind === 'submodule') {
+      const p = { path: ds.path };
+      return [
+        { header: ds.path },
+        { label: 'Open in gitSt8', icon: 'repo', run: () => post('openSubmodule', p) },
+        { label: 'Open in new window', icon: 'multiple-windows', run: () => post('openSubmoduleWindow', p) },
+        { label: 'Reveal in file explorer', icon: 'go-to-file', run: () => post('revealSubmodule', p) },
+        { label: 'Copy path', icon: 'copy', run: () => post('copy', { text: ds.path }) },
+        '-',
+        { label: ds.state === 'uninitialized' ? 'Initialize & update' : 'Update to recorded commit', icon: 'cloud-download', run: () => post('submoduleUpdate', p) },
+        { label: 'Sync URL', icon: 'sync', run: () => post('submoduleSync', p) },
+      ];
+    }
+    if (kind === 'lfs') return sectionMenu('lfs');
     return [];
   }
 
@@ -1224,6 +1255,16 @@
         return [
           { label: 'Add worktree…', icon: 'multiple-windows', run: () => post('addWorktree') },
           { label: 'Prune stale worktrees', icon: 'sync', run: () => post('pruneWorktrees') },
+        ];
+      case 'submodules':
+        return [
+          { label: 'Update all (init, recursive)', icon: 'cloud-download', run: () => post('submoduleUpdate') },
+          { label: 'Sync all URLs', icon: 'sync', run: () => post('submoduleSync') },
+        ];
+      case 'lfs':
+        return [
+          { label: 'Pull LFS files', icon: 'repo-pull', run: () => post('lfsPull') },
+          { label: 'Fetch LFS files', icon: 'cloud-download', run: () => post('lfsFetch') },
         ];
       case 'stashes':
         return [{ label: 'Stash changes…', icon: 'archive', run: () => post('stashSave') }];
@@ -1533,6 +1574,7 @@
     const item = e.target.closest('.item');
     if (item?.dataset.ref === 'local') post('checkout', { kind: 'local', name: item.dataset.name });
     if (item?.dataset.ref === 'remote') post('checkout', { kind: 'remote', name: item.dataset.name, branch: item.dataset.branch });
+    if (item?.dataset.ref === 'submodule' && item.dataset.state !== 'uninitialized') post('openSubmodule', { path: item.dataset.path });
     if (item?.dataset.ref === 'worktree' && normPath(item.dataset.path) !== normPath(S.data.root)) post('openWorktree', { path: item.dataset.path, newWindow: true });
     const badge = e.target.closest('.badge');
     if (badge?.dataset.badge === 'local') post('checkout', { kind: 'local', name: badge.dataset.name });
