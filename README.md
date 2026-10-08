@@ -119,9 +119,27 @@ Commits go through VS Code's Git extension, so commit signing and `git.*` settin
 | --- | --- |
 | **Fetch** | `git fetch --all --prune`: updates every remote and removes remote branches that were deleted on the server |
 | **Pull** | Asks how: repository default, `--rebase`, `--rebase --autostash`, `--ff-only`, or merge |
-| **Push** | Asks what to push: the current branch only, the branch with `--follow-tags` (annotated tags on the pushed commits), the branch plus all tags, or all tags only. Without an upstream, you pick a remote and the upstream is set. Tag pushes use the git CLI |
+| **Push** | Asks what to push: the current branch only, the branch with `--follow-tags` (annotated tags on the pushed commits), the branch plus all tags, all tags only, or one of three force pushes (see below). Without an upstream, you pick a remote and the upstream is set. Tag pushes and force pushes use the git CLI |
 
-On a branch, right-click for **Push**, **Force push (with lease)**, and **Fast-forward from upstream**. The last one updates a branch you are *not* on, without checking it out. On a remote, right-click for **Fetch & prune**, which fetches just that remote.
+**Right-click a toolbar button** to pick a variant directly instead of going through the quick pick:
+
+| Button | Right-click menu |
+| --- | --- |
+| **Fetch** | Fetch all & prune · Fetch all without pruning · Fetch one remote & prune (with several remotes) |
+| **Pull** | Default · `--rebase` · `--rebase --autostash` · `--ff-only` · `--no-rebase` (merge) |
+| **Push** | Push · `--follow-tags` · and all tags · the three force pushes · Push all tags |
+| **Branch** | Create and checkout · Create only · Create in a new worktree |
+| **Stash** | Tracked changes · including untracked · staged only · `--keep-index` |
+
+Force push comes in three strengths, from the toolbar **Push** menu (click or right-click) or by right-clicking a branch:
+
+| Option | Flags | Refuses when |
+| --- | --- | --- |
+| **Lease + if-includes** (safest) | `--force-with-lease --force-if-includes` | the remote moved since your last fetch, or has commits that were never in your local branch. Protects you even when VS Code auto-fetched in the background. Needs git 2.30+ |
+| **Lease only** | `--force-with-lease` | the remote moved since your last fetch. A background fetch (`git.autofetch`) silently renews the lease, so this can overwrite work you never saw |
+| **Unconditional** | `--force` | never. Overwrites whatever is on the remote |
+
+On a branch, right-click for **Push**, the three **Force push** options, and **Fast-forward from upstream**. The last one updates a branch you are *not* on, without checking it out. On a remote, right-click for **Fetch & prune**, which fetches just that remote.
 
 ### Branches
 
@@ -316,7 +334,7 @@ Rebind these in **Keyboard Shortcuts** (`Ctrl+K Ctrl+S`, on macOS `Cmd+K Cmd+S`;
 gitSt8 asks before anything destructive (hard reset, force push, deleting branches, tags, remotes or worktrees, discarding changes, pruning tags) and shows the exact effect in the dialog.
 
 - **Reset** defaults to `--keep`: the branch moves, but git refuses rather than overwrite your local changes. `--hard` gets an extra confirmation.
-- **Force push** always uses `--force-with-lease`. It refuses if someone else pushed since your last fetch.
+- **Force push** offers `--force-with-lease --force-if-includes` first, then lease only, then plain `--force`. Each confirmation dialog says what the chosen flags protect against. **Push stack** always uses `--force-with-lease`.
 - **Rebase, merge, cherry-pick or revert stopped?** The banner shows the operation, its progress and the conflicted files.
 
 ### Resolving conflicts

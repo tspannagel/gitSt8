@@ -12,7 +12,7 @@ npm run package    # vsce package -> .vsix; release via .github/workflows/publis
 ```
 
 - Node is installed system-wide at `C:\Program Files\nodejs`. Shells started before the install may not have it on PATH: prefix with `$env:Path = "C:\Program Files\nodejs;$env:Path"`.
-- F5 = "Run gitSt8": runs `npm: watch` first and starts the dev host with `--extensions-dir=.vscode-test/extensions` (an empty, git-ignored folder), so the user's many extensions don't load (otherwise: "Extension host did not start in 10 seconds"). Built-in extensions (vscode.git) stay enabled. Don't use `--disable-extensions`: on VS Code 1.141 the dev extension host crashes immediately with it (exit code 134, no exthost log).
+- F5 = "Run gitSt8": runs `npm: watch` first and starts the dev host with `--profile-temp` (fresh temporary profile, no user extensions; built-ins like vscode.git stay enabled). "Run gitSt8 (all extensions)" is the fallback: no isolation, slow, but known to work. On VS Code 1.141 both `--disable-extensions` and `--extensions-dir=<empty folder>` crash the dev extension host about 1 s after start (exit code 134, no exthost log), so don't use either. `--profile-temp` has not been confirmed to work yet.
 - `media/main.js` is not compiled. Check it with `node --check media/main.js`.
 - After changes, run `npm test` and `node --check media/main.js` before reporting done. There is no way to drive the webview UI from here, so say clearly what was not verified visually.
 

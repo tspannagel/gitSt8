@@ -951,6 +951,68 @@
   }
   const hideMenu = () => ($('#menu').hidden = true);
 
+  /** Right-click on a toolbar button: every variant directly, without the quick pick. */
+  function toolbarMenu(cmd) {
+    const cur = S.data?.head?.branch;
+    const b = cur && S.data.refs.local.find(x => x.name === cur);
+    const remotes = S.data?.refs.remoteInfo || [];
+    if (cmd === 'fetch') {
+      return [
+        { header: 'Fetch' },
+        { label: 'Fetch all & prune', icon: 'sync', run: () => post('fetch') },
+        { label: 'Fetch all (no prune)', icon: 'sync', run: () => post('fetch', { mode: 'noprune' }) },
+        ...(remotes.length > 1 ? ['-', ...remotes.map(r => ({ label: `Fetch ${r.name} & prune`, icon: 'cloud', run: () => post('fetchRemote', { remote: r.name }) }))] : []),
+      ];
+    }
+    if (cmd === 'pull') {
+      if (!b?.upstream) return [{ header: `${cur || 'HEAD'} has no upstream` }];
+      return [
+        { header: `Pull ${b.upstream} into ${cur}` },
+        { label: 'Pull (repository default)', icon: 'repo-pull', run: () => post('pull', { mode: 'default' }) },
+        { label: 'Pull --rebase', icon: 'repo-pull', run: () => post('pull', { mode: 'rebase' }) },
+        { label: 'Pull --rebase --autostash', icon: 'repo-pull', run: () => post('pull', { mode: 'autostash' }) },
+        { label: 'Pull --ff-only', icon: 'repo-pull', run: () => post('pull', { mode: 'ff' }) },
+        { label: 'Pull --no-rebase (merge)', icon: 'repo-pull', run: () => post('pull', { mode: 'merge' }) },
+      ];
+    }
+    if (cmd === 'push') {
+      return [
+        ...(cur
+          ? [
+              { header: `Push ${cur}` },
+              { label: 'Push', icon: 'repo-push', run: () => post('push', { mode: 'branch' }) },
+              { label: 'Push --follow-tags', icon: 'repo-push', run: () => post('push', { mode: 'follow' }) },
+              { label: 'Push and all tags', icon: 'repo-push', run: () => post('push', { mode: 'all' }) },
+              '-',
+              { label: 'Force push (lease + if-includes)…', danger: true, icon: 'repo-push', run: () => post('push', { mode: 'safe' }) },
+              { label: 'Force push (lease only)…', danger: true, icon: 'repo-push', run: () => post('push', { mode: 'lease' }) },
+              { label: 'Force push (unconditional --force)…', danger: true, icon: 'repo-push', run: () => post('push', { mode: 'force' }) },
+              '-',
+            ]
+          : [{ header: 'Detached HEAD' }]),
+        { label: 'Push all tags…', icon: 'tag', run: () => post('pushAllTags') },
+      ];
+    }
+    if (cmd === 'createBranch') {
+      return [
+        { header: 'New branch from HEAD' },
+        { label: 'Create and checkout…', icon: 'git-branch', run: () => post('createBranch', { mode: 'co' }) },
+        { label: 'Create only…', icon: 'git-branch', run: () => post('createBranch', { mode: 'create' }) },
+        { label: 'Create in a new worktree…', icon: 'folder-opened', run: () => post('createBranch', { mode: 'wt' }) },
+      ];
+    }
+    if (cmd === 'stashSave') {
+      return [
+        { header: 'Stash' },
+        { label: 'Stash tracked changes…', icon: 'archive', run: () => post('stashSave', { mode: 'tracked' }) },
+        { label: 'Stash including untracked…', icon: 'archive', run: () => post('stashSave', { mode: 'untracked' }) },
+        { label: 'Stash staged changes only…', icon: 'archive', run: () => post('stashSave', { mode: 'staged' }) },
+        { label: 'Stash, keep index…', icon: 'archive', run: () => post('stashSave', { mode: 'keepIndex' }) },
+      ];
+    }
+    return null;
+  }
+
   function multiMenu(shas) {
     const list = oldestFirst(shas.filter(x => x !== 'WIP'));
     const cur = headName();
@@ -1023,7 +1085,9 @@
             ]),
         '-',
         { label: 'Push', icon: 'repo-push', run: () => post('pushBranch', { name }) },
-        { label: 'Force push (with lease)…', danger: true, icon: 'repo-push', run: () => post('pushBranch', { name, force: true }) },
+        { label: 'Force push (lease + if-includes)…', danger: true, icon: 'repo-push', run: () => post('pushBranch', { name, force: 'safe' }) },
+        { label: 'Force push (lease only)…', danger: true, icon: 'repo-push', run: () => post('pushBranch', { name, force: 'lease' }) },
+        { label: 'Force push (unconditional --force)…', danger: true, icon: 'repo-push', run: () => post('pushBranch', { name, force: 'force' }) },
         ...(b?.upstream && !b.gone ? [{ label: `Fast-forward from ${b.upstream}`, icon: 'repo-pull', run: () => post('updateBranch', { name }) }] : []),
         { label: b?.upstream ? 'Change upstream…' : 'Set upstream…', icon: 'cloud', run: () => post('setUpstream', { name }) },
         ...(b?.upstream ? [{ label: 'Unset upstream', icon: 'cloud', run: () => post('unsetUpstream', { name }) }] : []),
@@ -1466,8 +1530,10 @@
     const tr = t.closest('#graph tr[data-sha]');
     const prEl = t.closest('[data-pr]');
     const ciEl = t.closest('[data-ci]');
+    const tbBtn = t.closest('button.tb[data-cmd]');
     let items = null;
-    if (prEl) items = prMenu(prEl.dataset.pr);
+    if (tbBtn) items = S.data ? toolbarMenu(tbBtn.dataset.cmd) : null;
+    else if (prEl) items = prMenu(prEl.dataset.pr);
     else if (ciEl) items = ciMenu(ciEl.dataset.ci);
     else if (t.closest('#integration') && S.integration?.signedIn) items = integrationMenu();
     else if (badge && badge.dataset.badge !== 'head') items = refMenu(badge.dataset.badge, badge.dataset);

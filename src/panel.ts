@@ -40,6 +40,20 @@ type Msg = Record<string, any>;
 
 /** Quick pick entry carrying the data an action needs. */
 type PickItem = vscode.QuickPickItem & { id?: string; args?: string[]; mode?: string; value?: string };
+/** Force-push strength: 'safe' = lease + if-includes, 'lease' = lease only, 'force' = unconditional. */
+type ForceMode = 'safe' | 'lease' | 'force';
+const FORCE_FLAGS: Record<ForceMode, string[]> = {
+  safe: ['--force-with-lease', '--force-if-includes'],
+  lease: ['--force-with-lease'],
+  force: ['--force'],
+};
+const PULL_MODES: PickItem[] = [
+  { label: 'Pull', description: 'repository default (pull.rebase / pull.ff config)', id: 'default' },
+  { label: 'Pull --rebase', description: 'replay your commits on top of upstream', id: 'rebase', args: ['--rebase'] },
+  { label: 'Pull --rebase --autostash', description: 'same, stashing local changes around it', id: 'autostash', args: ['--rebase', '--autostash'] },
+  { label: 'Pull --ff-only', description: 'only fast-forward, never merge or rebase', id: 'ff', args: ['--ff-only'] },
+  { label: 'Pull --no-rebase', description: 'merge upstream into your branch', id: 'merge', args: ['--no-rebase', '--no-edit'] },
+];
 
 /**
  * The UI can live in the bottom panel (a WebviewView, default) or in an editor tab (a WebviewPanel).
@@ -711,56 +725,60 @@ export class RepoPanel {
 
   // ---- remote ops (fetch/pull/push of the current branch go through the git extension so credentials work)
 
-  async on_fetch() {
+  /** m.mode (from the toolbar right-click menu): 'noprune' fetches all remotes without pruning. */
+  async on_fetch(m: Msg = {}) {
+    if (m.mode === 'noprune') return this.runOp('Fetch all', () => this.requireRepo().fetch({ all: true }), true);
     await this.runOp('Fetch all & prune', () => this.requireRepo().fetch({ all: true, prune: true }), true);
   }
 
-  async on_pull() {
+  /** m.mode (from the toolbar right-click menu) skips the quick pick: one of the PULL_MODES ids. */
+  async on_pull(m: Msg = {}) {
     const head = this.lastHead;
     const b = head?.branch ? this.localBranch(head.branch) : undefined;
     if (!b?.upstream) return vscode.window.showWarningMessage(`${this.currentName()} has no upstream. Use "Set upstream…" on the branch first.`);
-    const pick = await vscode.window.showQuickPick<PickItem>([
-        { label: 'Pull', description: 'repository default (pull.rebase / pull.ff config)', id: 'default' },
-        { label: 'Pull --rebase', description: 'replay your commits on top of upstream', args: ['--rebase'] },
-        { label: 'Pull --rebase --autostash', description: 'same, stashing local changes around it', args: ['--rebase', '--autostash'] },
-        { label: 'Pull --ff-only', description: 'only fast-forward, never merge or rebase', args: ['--ff-only'] },
-        { label: 'Pull --no-rebase', description: 'merge upstream into your branch', args: ['--no-rebase', '--no-edit'] },
-      ],
-      { placeHolder: `Pull ${b.upstream} into ${b.name}` }
-    );
+    const pick = PULL_MODES.find(p => p.id === m.mode) || (await vscode.window.showQuickPick<PickItem>(PULL_MODES, { placeHolder: `Pull ${b.upstream} into ${b.name}` }));
     if (!pick) return;
     if (pick.id === 'default') return this.runOp('Pull', () => this.requireRepo().pull(), true);
     const args = pick.args || [];
     await this.runOp(`Pull ${args.join(' ')}`, () => this.git().run(['pull', ...args], { env: { GIT_EDITOR: ':' } }), true);
   }
 
-  async on_push() {
+  /** m.mode (from the toolbar right-click menu) skips the quick pick: branch, follow, all, tags, safe, lease or force. */
+  async on_push(m: Msg = {}) {
     const head = this.lastHead;
     const branch = head?.branch;
-    const pick = await vscode.window.showQuickPick<PickItem>([
+    const pick = m.mode ? { id: String(m.mode) } : await vscode.window.showQuickPick<PickItem>([
         ...(branch
           ? [
               { label: `Push ${branch}`, description: 'current branch only', id: 'branch' },
               { label: `Push ${branch} --follow-tags`, description: 'plus annotated tags on the pushed commits', id: 'follow' },
               { label: `Push ${branch} and all tags`, description: 'plus every local tag (git push --tags)', id: 'all' },
+              { label: 'Force push', kind: vscode.QuickPickItemKind.Separator },
+              { label: `$(shield) Force push ${branch} (lease + if-includes)`, description: '--force-with-lease --force-if-includes · safest', id: 'safe' },
+              { label: `$(warning) Force push ${branch} (lease)`, description: '--force-with-lease · refuses if the remote moved since your last fetch', id: 'lease' },
+              { label: `$(error) Force push ${branch} (unconditional)`, description: '--force · overwrites whatever is on the remote', id: 'force' },
             ]
           : []),
+        { label: 'Tags', kind: vscode.QuickPickItemKind.Separator },
         { label: 'Push all tags', description: 'tags only, no branch', id: 'tags' },
       ],
       { placeHolder: branch ? `Push ${branch}` : 'Detached HEAD: only tags can be pushed' }
     );
     if (!pick) return;
     if (pick.id === 'tags') return this.on_pushAllTags();
-    if (!branch) return;
+    if (!branch) return vscode.window.showWarningMessage('Detached HEAD: check out a branch to push it.');
+    if (pick.id === 'safe' || pick.id === 'lease' || pick.id === 'force') return this.pushBranch(branch, pick.id);
     await this.pushBranch(branch, false, pick.id === 'follow' ? 'follow' : pick.id === 'all' ? 'all' : undefined);
   }
 
+  /** m.force: true/'lease' = --force-with-lease, 'safe' = plus --force-if-includes, 'force' = plain --force. */
   async on_pushBranch(m: Msg) {
-    await this.pushBranch(m.name, !!m.force);
+    const force: ForceMode | false = m.force === true ? 'lease' : m.force === 'safe' || m.force === 'lease' || m.force === 'force' ? m.force : false;
+    await this.pushBranch(m.name, force);
   }
 
   /** tags: 'follow' = --follow-tags (annotated tags reachable from the pushed commits), 'all' = also push every tag. */
-  async pushBranch(name: string, force: boolean, tags?: 'follow' | 'all') {
+  async pushBranch(name: string, force: ForceMode | false, tags?: 'follow' | 'all') {
     const b = this.localBranch(name);
     const upstream = b?.upstream && !b.gone ? this.splitUpstream(b.upstream) : null;
     const setUpstream = !upstream;
@@ -768,11 +786,17 @@ export class RepoPanel {
     if (!remote) return;
     const target = upstream || { remote, branch: name };
     if (force) {
-      const ok = await this.confirm(`Force-push '${name}' to ${target.remote}/${target.branch}?`, 'Uses --force-with-lease: refuses if the remote moved since your last fetch.', 'Force Push');
+      const flags = FORCE_FLAGS[force];
+      const detail = {
+        safe: 'Uses --force-with-lease --force-if-includes: refuses if the remote moved since your last fetch, or if it has commits you never had locally (protects against background auto-fetch).',
+        lease: 'Uses --force-with-lease: refuses if the remote moved since your last fetch. Note: a background fetch (git.autofetch) updates that reference, so the lease may not protect you.',
+        force: 'Uses --force: overwrites the remote branch unconditionally. Commits pushed by others since will be lost from the branch.',
+      }[force];
+      const ok = await this.confirm(`Force-push '${name}' to ${target.remote}/${target.branch}?`, detail, force === 'force' ? 'Force Push (Unconditional)' : 'Force Push');
       if (!ok) return;
-      const args = ['push', '--force-with-lease'];
+      const args = ['push', ...flags];
       if (setUpstream) args.push('-u');
-      return this.runOp(`Force push ${name}`, () => this.git().run([...args, target.remote, `${name}:${target.branch}`]), true);
+      return this.runOp(`Force push ${name} ${flags.join(' ')}`, () => this.git().run([...args, target.remote, `${name}:${target.branch}`]), true);
     }
     const refspec = target.branch === name ? name : `${name}:${target.branch}`;
     if (tags === 'follow') {
@@ -897,7 +921,8 @@ export class RepoPanel {
       validateInput: v => (/^\S+$/.test(v) && !v.startsWith('-') ? null : 'Enter a valid branch name'),
     });
     if (!name) return;
-    const pick = await vscode.window.showQuickPick<PickItem>([
+    // m.mode (from the toolbar right-click menu) skips the pick: co, create or wt.
+    const pick = ['co', 'create', 'wt'].includes(m.mode) ? { id: m.mode as string } : await vscode.window.showQuickPick<PickItem>([
         { label: 'Create and checkout', id: 'co' },
         { label: 'Create only', id: 'create' },
         { label: 'Create in a new worktree', id: 'wt', description: 'check it out in a separate folder' },
@@ -1446,16 +1471,17 @@ export class RepoPanel {
 
   // ---- stashes
 
-  async on_stashSave() {
+  /** m.mode (from the toolbar right-click menu) skips the "what to stash" pick: tracked, untracked, staged or keepIndex. */
+  async on_stashSave(m: Msg = {}) {
+    const modes: PickItem[] = [
+      { label: 'Tracked changes', id: 'tracked', args: [] },
+      { label: 'Include untracked files', id: 'untracked', args: ['--include-untracked'] },
+      { label: 'Staged changes only', id: 'staged', args: ['--staged'] },
+      { label: 'Keep staged changes in the index', id: 'keepIndex', args: ['--keep-index'] },
+    ];
     const message = await vscode.window.showInputBox({ prompt: 'Stash message (optional)' });
     if (message === undefined) return;
-    const pick = await vscode.window.showQuickPick<PickItem>([
-        { label: 'Tracked changes', args: [] },
-        { label: 'Include untracked files', args: ['--include-untracked'] },
-        { label: 'Staged changes only', args: ['--staged'] },
-      ],
-      { placeHolder: 'What to stash' }
-    );
+    const pick = modes.find(p => p.id === m.mode) || (await vscode.window.showQuickPick<PickItem>(modes, { placeHolder: 'What to stash' }));
     if (!pick) return;
     const args = ['stash', 'push', ...(pick.args || [])];
     if (message) args.push('-m', message);
@@ -1505,13 +1531,13 @@ ${font ? `<style nonce="${nonce}">@font-face { font-family: "codicon"; font-disp
   <span id="integration" hidden></span>
   <span class="tgroup">
     <button class="tb primary-tb" data-cmd="openCommit" title="Staged/unstaged changes and commit"><i class="ci" data-icon="check"></i><span class="lbl">Commit</span></button>
-    <button class="tb" data-cmd="fetch" title="Fetch all remotes and prune deleted branches"><i class="ci" data-icon="sync"></i><span class="lbl">Fetch</span></button>
-    <button class="tb" data-cmd="pull" title="Pull current branch (rebase / ff-only / merge)"><i class="ci" data-icon="repo-pull"></i><span class="lbl">Pull</span></button>
-    <button class="tb" data-cmd="push" title="Push current branch, optionally with tags"><i class="ci" data-icon="repo-push"></i><span class="lbl">Push</span></button>
+    <button class="tb" data-cmd="fetch" title="Fetch all remotes and prune deleted branches (right-click: more options)"><i class="ci" data-icon="sync"></i><span class="lbl">Fetch</span></button>
+    <button class="tb" data-cmd="pull" title="Pull current branch: rebase / ff-only / merge (right-click: pick directly)"><i class="ci" data-icon="repo-pull"></i><span class="lbl">Pull</span></button>
+    <button class="tb" data-cmd="push" title="Push current branch, with tags or force push (right-click: pick directly)"><i class="ci" data-icon="repo-push"></i><span class="lbl">Push</span></button>
   </span>
   <span class="tgroup">
-    <button class="tb" data-cmd="createBranch" title="New branch from HEAD"><i class="ci" data-icon="git-branch"></i><span class="lbl">Branch</span></button>
-    <button class="tb" data-cmd="stashSave" title="Stash changes"><i class="ci" data-icon="archive"></i><span class="lbl">Stash</span></button>
+    <button class="tb" data-cmd="createBranch" title="New branch from HEAD (right-click: checkout / create only / worktree)"><i class="ci" data-icon="git-branch"></i><span class="lbl">Branch</span></button>
+    <button class="tb" data-cmd="stashSave" title="Stash changes (right-click: untracked / staged only / keep index)"><i class="ci" data-icon="archive"></i><span class="lbl">Stash</span></button>
     <button class="tb" data-cmd="cleanupBranches" title="Delete gone, merged or stale local branches"><i class="ci" data-icon="clear-all"></i><span class="lbl">Clean up</span></button>
     <button class="tb" data-cmd="reflog" title="HEAD reflog: undo resets, rebases and other history changes"><i class="ci" data-icon="history"></i><span class="lbl">Reflog</span></button>
   </span>
