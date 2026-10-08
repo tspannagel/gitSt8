@@ -1,6 +1,6 @@
 import { toStatus } from './ci';
-import { requestJson } from './http';
-import { AuthHeader, CiCheck, CiState, CiStatus, ProviderClient, PullRequest, RepoRef, ReviewState } from './types';
+import { HttpError, requestJson } from './http';
+import { AuthError, AuthHeader, NewPullRequest, CiCheck, CiState, CiStatus, ProviderClient, PullRequest, RepoRef, ReviewState } from './types';
 
 /** Azure DevOps resource id, used as the OAuth scope for Microsoft sign-in. */
 export const AZURE_DEVOPS_SCOPE = '499b84ac-1321-427f-aa17-267ca6975798/.default';
@@ -96,6 +96,19 @@ export function mapPullRequest(repo: RepoRef, p: AdoPr): PullRequest {
   };
 }
 
+/** Request body for POST .../pullrequests. */
+export function createPullRequestBody(i: NewPullRequest): Record<string, unknown> {
+  return { sourceRefName: `refs/heads/${i.source}`, targetRefName: `refs/heads/${i.target}`, title: i.title, description: i.body, isDraft: i.draft };
+}
+
+/** Turns auth and "already exists" failures into messages that say what to do. */
+export function friendlyCreateError(e: unknown): Error {
+  const msg = e instanceof Error ? e.message : String(e);
+  if ((e instanceof HttpError && e.status === 409) || /TF401179/i.test(msg)) return new Error('A pull request for this branch already exists.');
+  if (e instanceof AuthError) return new Error('Azure DevOps refused to create the pull request. A personal access token needs the "Code (Read & write)" scope.');
+  return e instanceof Error ? e : new Error(msg);
+}
+
 export class AzureDevOpsClient implements ProviderClient {
   private repoIds = new Map<string, string>();
 
@@ -131,5 +144,16 @@ export class AzureDevOpsClient implements ProviderClient {
       `build/builds?repositoryId=${id}&repositoryType=TfsGit&queryOrder=queueTimeDescending&$top=200`
     );
     return mapBuilds(res.value, new Set(shas));
+  }
+
+  async createPullRequest(repo: RepoRef, input: NewPullRequest): Promise<PullRequest> {
+    try {
+      const id = await this.repoId(repo);
+      const url = `${base(repo)}/_apis/git/repositories/${id}/pullrequests?api-version=${API_VERSION}`;
+      const res = await requestJson<AdoPr>(url, await this.auth(repo), { method: 'POST', body: createPullRequestBody(input) });
+      return mapPullRequest(repo, res);
+    } catch (e) {
+      throw friendlyCreateError(e);
+    }
   }
 }

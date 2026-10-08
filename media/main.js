@@ -672,6 +672,7 @@
     return [
       { header: `#${p.number} ${p.title}` },
       { label: 'Open in browser', icon: 'link-external', run: () => post('openExternal', { url: p.url }) },
+      { label: 'Check out PR branch', icon: 'check', run: () => post('checkoutPr', { number: p.number }) },
       { label: `Compare with ${st.remote}/${p.targetBranch}`, icon: 'git-compare', run: () => compare(`${st.remote}/${p.targetBranch}`, p.headSha || `${st.remote}/${p.sourceBranch}`) },
       ...(p.headSha && commitBySha(p.headSha) ? [{ label: 'Show head commit', icon: 'go-to-file', run: () => select(p.headSha, true) }] : []),
       { label: 'Copy link', icon: 'copy', run: () => post('copy', { text: p.url }) },
@@ -1235,6 +1236,12 @@
         { label: 'Force push (lease + if-includes)…', danger: true, icon: 'repo-push', run: () => post('pushBranch', { name, force: 'safe' }) },
         { label: 'Force push (lease only)…', danger: true, icon: 'repo-push', run: () => post('pushBranch', { name, force: 'lease' }) },
         { label: 'Force push (unconditional --force)…', danger: true, icon: 'repo-push', run: () => post('pushBranch', { name, force: 'force' }) },
+        ...(S.integration?.signedIn && b && !prsForBranch('local', b).length
+          ? [{ label: 'Create pull request…', icon: 'git-pull-request', run: () => post('createPr', { name }) }]
+          : []),
+        ...(S.integration && b?.upstream?.startsWith(`${S.integration.remote}/`) && !b.gone && !prsForBranch('local', b).length
+          ? [{ label: 'Create pull request in browser…', icon: 'git-pull-request', run: () => post('createPrInBrowser', { name }) }]
+          : []),
         ...(b?.upstream && !b.gone ? [{ label: `Fast-forward from ${b.upstream}`, icon: 'repo-pull', run: () => post('updateBranch', { name }) }] : []),
         { label: b?.upstream ? 'Change upstream…' : 'Set upstream…', icon: 'cloud', run: () => post('setUpstream', { name }) },
         ...(b?.upstream ? [{ label: 'Unset upstream', icon: 'cloud', run: () => post('unsetUpstream', { name }) }] : []),
@@ -1243,9 +1250,6 @@
         ...(b?.upstream && !b.gone ? [{ label: `Compare with ${b.upstream}`, icon: 'git-compare', run: () => compare(b.upstream, name) }] : []),
         { label: 'Compare with working tree', icon: 'git-compare', run: () => compare(name, null) },
         '-',
-        ...(S.integration && b?.upstream?.startsWith(`${S.integration.remote}/`) && !b.gone && !prsForBranch('local', b).length
-          ? [{ label: 'Create pull request in browser…', icon: 'git-pull-request', run: () => post('createPrInBrowser', { name }) }, '-']
-          : []),
         { label: 'Rename…', icon: 'edit', run: () => post('renameBranch', { name }) },
         { label: 'Copy name', icon: 'copy', run: () => post('copy', { text: name }) },
         ...(isHead ? [] : [{ label: 'Delete…', danger: true, icon: 'trash', run: () => post('deleteBranch', { kind: 'local', name }) }]),
