@@ -5,8 +5,10 @@
 # Manual run (Actions tab → "Publish extension" → Run workflow) builds the .vsix only,
 # unless "publish" is ticked.
 #
-# Needs the repository secret VSCE_PAT: an Azure DevOps personal access token with
-# organization "All accessible organizations" and scope "Marketplace → Manage".
+# Publishing uses Microsoft Entra ID instead of a personal access token: GitHub's OIDC token is
+# exchanged for an Azure token of a managed identity that is a member of the Marketplace publisher.
+# Needs the GitHub environment "marketplace" with the variables AZURE_CLIENT_ID and AZURE_TENANT_ID
+# (and optionally AZURE_SUBSCRIPTION_ID). Setup: see "Releasing" in README.md.
 
 name: Publish extension
 
@@ -21,17 +23,17 @@ on:
         default: false
 
 permissions:
-  contents: write # create the GitHub release
+  contents: read
 
 concurrency:
   group: publish
   cancel-in-progress: false
 
 jobs:
-  publish:
+  build:
     runs-on: ubuntu-latest
-    env:
-      PUBLISH: ${{ github.event_name == 'push' || inputs.publish }}
+    outputs:
+      vsix: ${{ steps.package.outputs.vsix }}
     steps:
       - uses: actions/checkout@v4
 
@@ -46,7 +48,7 @@ jobs:
         run: npm test
 
       - name: Check release metadata
-        if: env.PUBLISH == 'true'
+        if: github.event_name == 'push' || inputs.publish
         run: |
           node -e '
             const p = require("./package.json");
@@ -71,18 +73,52 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.package.outputs.vsix }}
+          name: vsix
           path: ${{ steps.package.outputs.vsix }}
 
-      # Publishes the exact file that was tested and packaged above.
+  publish:
+    needs: build
+    if: github.event_name == 'push' || inputs.publish
+    runs-on: ubuntu-latest
+    # The Azure federated credential trusts only jobs in this environment.
+    environment: marketplace
+    permissions:
+      contents: write # create the GitHub release
+      id-token: write # request the OIDC token for the Azure login
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: vsix
+
+      - name: Sign in to Azure (workload identity federation, no secret)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          allow-no-subscriptions: true
+
+      # The Marketplace member ID of the identity. Add it to the publisher once (see README).
+      - name: Show identity
+        run: |
+          az rest -u https://app.vssps.visualstudio.com/_apis/profile/profiles/me \
+            --resource 499b84ac-1321-427f-aa17-267ca6975798 --query "{id: id, name: displayName}" -o table
+
+      # Publishes the exact file that was tested and packaged by the build job.
       - name: Publish to the Marketplace
-        if: env.PUBLISH == 'true'
-        run: npx vsce publish --packagePath "${{ steps.package.outputs.vsix }}"
-        env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: npx vsce publish --azure-credential --packagePath "${{ needs.build.outputs.vsix }}"
 
       - name: Create GitHub release
         if: github.event_name == 'push'
-        run: gh release create "$GITHUB_REF_NAME" "${{ steps.package.outputs.vsix }}" --title "$GITHUB_REF_NAME" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" "${{ needs.build.outputs.vsix }}" --title "$GITHUB_REF_NAME" --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}

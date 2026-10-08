@@ -2,6 +2,8 @@
 
 **One view for the git workflows the built-in Source Control view makes awkward.**
 
+[Install from the Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=tisp.gitst8) · [Source on GitHub](https://github.com/tspannagel/gitSt8) · [Report an issue](https://github.com/tspannagel/gitSt8/issues)
+
 gitSt8 puts history, branches, remotes, tags, worktrees, stashes, staging and every common history-rewriting operation into a single panel next to your terminal. Instead of switching between the SCM view, the command palette and a shell, you right-click the thing you want to change.
 
 - [Getting started](#getting-started)
@@ -25,12 +27,13 @@ gitSt8 puts history, branches, remotes, tags, worktrees, stashes, staging and ev
 
 ### Install
 
-gitSt8 is not on the Marketplace yet. Pick one of these:
+Install **gitSt8** from the [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=tisp.gitst8):
 
-| Option | Steps |
-| --- | --- |
-| Try it without installing | Run `npm install` once, open this folder in VS Code and press `F5`. A second window (*Extension Development Host*) starts with gitSt8 loaded. |
-| Install from source | Run `npm install && npm run compile`, create a link to this folder in your extensions directory, then restart VS Code. Windows: `New-Item -ItemType Junction -Path "$env:USERPROFILE\.vscode\extensions\tisp.gitst8-0.0.2" -Target "<path to this folder>"`. macOS/Linux: `ln -s "<path to this folder>" ~/.vscode/extensions/tisp.gitst8-0.0.2` |
+- In VS Code, open the Extensions view (`Ctrl+Shift+X`), search for `gitSt8` and select **Install**, or
+- run `code --install-extension tisp.gitst8` in a terminal, or
+- press `Ctrl+P` and enter `ext install tisp.gitst8`.
+
+Updates arrive automatically through VS Code. To try a specific build, download the `.vsix` from [GitHub Releases](https://github.com/tspannagel/gitSt8/releases) and use **Extensions → … → Install from VSIX…**. To run it from source, see [Development](#development).
 
 ### Open it
 
@@ -335,7 +338,7 @@ Then click **Continue**, or **Skip commit** (rebase / cherry-pick / revert), or 
 | Problem | Fix |
 | --- | --- |
 | **"Extension host did not start in 10 seconds"** on `F5` | The development window loads all your extensions and was too slow for the debugger. The included launch configuration starts it with `--disable-extensions` (built-in Git stays on); press `F5` again |
-| Hotkey does nothing | The extension only runs in the development window unless installed (see [Install](#install)). Also check for conflicts in Keyboard Shortcuts |
+| Hotkey does nothing | Check that gitSt8 is installed and enabled in the Extensions view (see [Install](#install)), and look for conflicting bindings in Keyboard Shortcuts |
 | View says "No git repository open" | Open a folder that contains a git repository. Check that the built-in Git extension is enabled and `git.enabled` is not `false` |
 | Push / fetch asks for credentials repeatedly | Toolbar fetch/pull/push use VS Code's Git credentials. Force-push, remote branch/tag deletion and tag operations call `git` directly and rely on your credential helper (Git Credential Manager on Windows) |
 | Icons are missing | gitSt8 uses the icon font that ships with VS Code (`out/media/codicon.ttf`). If a build lacks it, icons are hidden. Widen the view to see the button labels, or hover for tooltips |
@@ -385,11 +388,15 @@ Design notes:
 
 [`.github/workflows/publish.yml`](.github/workflows/publish.yml) tests, packages and publishes the extension.
 
-1. One-time setup: add the repository secret `VSCE_PAT`: an Azure DevOps personal access token for *All accessible organizations* with the scope *Marketplace → Manage*.
-2. Bump `version` in package.json and commit.
-3. Push a matching tag: `git tag v0.0.3 && git push origin v0.0.3`.
+To release: bump `version` in package.json, commit, and push a matching tag (`git tag v0.0.3 && git push origin v0.0.3`). The workflow refuses to publish when the tag and the version differ or the metadata is incomplete. It publishes the `.vsix` it just tested, attaches it to a GitHub release and keeps it as a build artifact. To build a `.vsix` without publishing, run the workflow manually from the Actions tab and leave *publish* unticked.
 
-The workflow refuses to publish when the tag and the version differ or the metadata is incomplete. It publishes the `.vsix` it just tested, attaches it to a GitHub release and keeps it as a build artifact. To build a `.vsix` without publishing, run the workflow manually from the Actions tab and leave *publish* unticked.
+Publishing authenticates with Microsoft Entra ID instead of a personal access token (global PATs are retired on December 1, 2026). GitHub's short-lived OIDC token is exchanged for a token of an Azure managed identity, and `vsce publish --azure-credential` uses it. No secret is stored anywhere. One-time setup:
+
+1. **Azure: managed identity.** In the Azure portal, create a *user-assigned managed identity* (any resource group). Note its *Client ID*, *Tenant ID* and *Subscription ID*. No role assignment is needed.
+2. **Azure: federated credential.** On the identity, open *Federated credentials → Add credential → GitHub Actions deploying Azure resources*: organization `tspannagel`, repository `gitSt8`, entity *Environment*, environment `marketplace`. This results in the subject `repo:tspannagel/gitSt8:environment:marketplace` and the issuer `https://token.actions.githubusercontent.com`.
+3. **GitHub: environment.** In the repository settings, create the environment `marketplace`. Add the *variables* (not secrets) `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and `AZURE_SUBSCRIPTION_ID`. Recommended: under *Deployment branches and tags*, allow only tags matching `v*`, and add yourself as a required reviewer.
+4. **Marketplace: member ID.** Run the workflow manually with *publish* ticked. The *Show identity* step prints the identity's Marketplace ID; the publish step fails at this point because the identity is not a member yet.
+5. **Marketplace: membership.** At [marketplace.visualstudio.com/manage](https://marketplace.visualstudio.com/manage/publishers/tisp), open *Members*, add that ID and give it the *Contributor* role. Re-run the workflow.
 
 ---
 
