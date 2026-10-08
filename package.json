@@ -2,8 +2,9 @@
   "name": "gitst8",
   "displayName": "gitSt8",
   "description": "One view for advanced git workflows: graph history, search, fetch/prune, branch, merge, rebase (incl. interactive), stacks, worktrees, tags, reflog undo, compare and diff.",
-  "version": "0.3.0",
+  "version": "1.0.0",
   "publisher": "tisp",
+  "icon": "gitst8.png",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -50,6 +51,7 @@
           "type": "webview",
           "id": "gitst8.view",
           "name": "gitSt8",
+          "icon": "media/icon.svg",
           "when": "config.gitst8.location != editor"
         }
       ]
