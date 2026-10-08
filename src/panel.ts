@@ -1746,7 +1746,7 @@ export class RepoPanel {
   }
 
   /** Opens the provider's "new pull request" page for a pushed branch, targeting the stack base. */
-  async on_createPr(m: Msg) {
+  async on_createPrInBrowser(m: Msg) {
     const t = this.hostRepo();
     const b = this.localBranch(m.name);
     if (!t || !b) return;

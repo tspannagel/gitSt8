@@ -1226,7 +1226,7 @@
         { label: 'Compare with working tree', icon: 'git-compare', run: () => compare(name, null) },
         '-',
         ...(S.integration && b?.upstream?.startsWith(`${S.integration.remote}/`) && !b.gone && !prsForBranch('local', b).length
-          ? [{ label: 'Create pull request in browser…', icon: 'git-pull-request', run: () => post('createPr', { name }) }, '-']
+          ? [{ label: 'Create pull request in browser…', icon: 'git-pull-request', run: () => post('createPrInBrowser', { name }) }, '-']
           : []),
         { label: 'Rename…', icon: 'edit', run: () => post('renameBranch', { name }) },
         { label: 'Copy name', icon: 'copy', run: () => post('copy', { text: name }) },
