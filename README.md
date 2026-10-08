@@ -54,13 +54,13 @@ Prefer an editor tab? Set `"gitst8.location": "editor"`. You can also drag the p
 ┌──────────────────────────────────────────────────────────────────────────────────────┐
 │ [repo ▾] (branch)  ✓Commit ⟳Fetch ⤓Pull ⤒Push │ ⑂Branch ▣Stash ⌫Clean up ↶Reflog  🔍 │  toolbar
 ├────────────────┬──────────────────────────────────────────┬──────────────────────────┤
-│ Filter…        │ ● Uncommitted changes · 1 staged · 2 …   │ Commit details           │
-│ ▾ STACK        │ ●─ fix parser       [main] [origin/main] │  message, author, SHA    │
-│ ▾ BRANCHES     │ │ ● add tests        [feature/x]         │  changed files → diff    │
-│ ▸ REMOTES      │ ●─┘ initial                    [v1.0]    │                          │
-│ ▸ TAGS         │                                          │  (or: commit box,        │
-│ ▸ WORKTREES    │                                          │   compare, reflog …)     │
-│ ▸ STASHES      │                                          │                          │
+│ Filter…        │ ● Uncommitted changes · 1 staged · 2 …   │ Commit to main           │
+│ ▾ STACK        │ ●─ fix parser       [main] [origin/main] │  [message…]   ✓ Commit   │
+│ ▾ BRANCHES     │ │ ┃ message, author, SHA, files → diff   │  Staged changes          │
+│ ▸ REMOTES      │ │ ● add tests        [feature/x]         │  Changes                 │
+│ ▸ TAGS         │ ●─┘ initial                    [v1.0]    │                          │
+│ ▸ WORKTREES    │                                          │  (or: compare, stash,    │
+│ ▸ STASHES      │                                          │   reflog, multi-select)  │
 └────────────────┴──────────────────────────────────────────┴──────────────────────────┘
    sidebar                    commit graph                        details pane
 ```
@@ -80,13 +80,15 @@ Prefer an editor tab? Set `"gitst8.location": "editor"`. You can also drag the p
 
 **Commit graph.** Every branch is drawn with its own lane. Labels on a commit show the local branches (green), remote branches (blue), tags (amber) and stashes (pink) that point at it. When your working tree has changes, an **Uncommitted changes** row sits on top. History loads in pages of 400 commits; use **Load more** at the bottom.
 
-**Details pane.** Shows whatever you selected: a commit, the commit box, a comparison, a stash, the reflog or a multi-selection. Click any file to open VS Code's diff editor, and right-click it for *Open file*, *File history* and *Copy path*. Drag the divider to resize the pane. It sits to the right of the graph in the bottom panel and below it in a tall editor tab.
+**Commit details** open inline, right under the commit you click, so the commit box stays where it is. Click the commit again to close them.
+
+**Details pane.** Shows the commit box (staged and unstaged changes) by default. A comparison, a stash, the reflog or a multi-selection temporarily take its place; clicking a single commit (or clearing the selection) brings the commit box back. Click any file to open VS Code's diff editor, and right-click it for *Open file*, *File history* and *Copy path*. Drag the divider to resize the pane. It sits to the right of the graph in the bottom panel and below it in a tall editor tab.
 
 **Selecting commits.**
 
 | Action | Result |
 | --- | --- |
-| Click | Show the commit's details |
+| Click | Show the commit's details under it; click again to close them |
 | `Ctrl`/`Cmd`+click | Add or remove a commit from the selection. With exactly two selected, gitSt8 compares them |
 | `Shift`+click | Select a range |
 | `↑` / `↓` | Move the selection |
@@ -117,7 +119,7 @@ Commits go through VS Code's Git extension, so commit signing and `git.*` settin
 | --- | --- |
 | **Fetch** | `git fetch --all --prune`: updates every remote and removes remote branches that were deleted on the server |
 | **Pull** | Asks how: repository default, `--rebase`, `--rebase --autostash`, `--ff-only`, or merge |
-| **Push** | Pushes the current branch. Without an upstream, you pick a remote and the upstream is set |
+| **Push** | Asks what to push: the current branch only, the branch with `--follow-tags` (annotated tags on the pushed commits), the branch plus all tags, or all tags only. Without an upstream, you pick a remote and the upstream is set. Tag pushes use the git CLI |
 
 On a branch, right-click for **Push**, **Force push (with lease)**, and **Fast-forward from upstream**. The last one updates a branch you are *not* on, without checking it out. On a remote, right-click for **Fetch & prune**, which fetches just that remote.
 
@@ -232,7 +234,7 @@ The current branch, the base branch and branches checked out in other worktrees 
 | Action | Where |
 | --- | --- |
 | Create (lightweight or annotated), then optionally push | Right-click a commit → *Tag…* |
-| Push one tag / all tags | Right-click a tag → *Push tag*; Tags **⋯** → *Push all tags* |
+| Push one tag / all tags | Right-click a tag → *Push tag*; Tags **⋯** → *Push all tags*; or toolbar **Push** → *with tags* |
 | Delete locally, on the remote, or both | Right-click a tag → *Delete…* |
 | Compare local tags with a remote | Tags **⋯** → *Compare with remote*. Adds `local only` / `remote only` / `differs` markers and lists remote-only tags (right-click them to fetch or delete) |
 | Fetch tags | Tags **⋯** → *Fetch tags* |
@@ -337,12 +339,12 @@ Then click **Continue**, or **Skip commit** (rebase / cherry-pick / revert), or 
 
 | Problem | Fix |
 | --- | --- |
-| **"Extension host did not start in 10 seconds"** on `F5` | The development window loads all your extensions and was too slow for the debugger. The included launch configuration starts it with `--disable-extensions` (built-in Git stays on); press `F5` again |
+| **"Extension host did not start in 10 seconds"** on `F5` | The development window loads all your extensions and was too slow for the debugger. The included launch configuration starts it with an empty extensions folder (`--extensions-dir=.vscode-test/extensions`), so only built-in extensions such as Git load. Avoid `--disable-extensions`: on VS Code 1.141 it makes the development extension host crash right away (exit code 134) |
 | Hotkey does nothing | Check that gitSt8 is installed and enabled in the Extensions view (see [Install](#install)), and look for conflicting bindings in Keyboard Shortcuts |
 | View says "No git repository open" | Open a folder that contains a git repository. Check that the built-in Git extension is enabled and `git.enabled` is not `false` |
 | Push / fetch asks for credentials repeatedly | Toolbar fetch/pull/push use VS Code's Git credentials. Force-push, remote branch/tag deletion and tag operations call `git` directly and rely on your credential helper (Git Credential Manager on Windows) |
 | Icons are missing | gitSt8 uses the icon font that ships with VS Code (`out/media/codicon.ttf`). If a build lacks it, icons are hidden. Widen the view to see the button labels, or hover for tooltips |
-| A commit from the editor isn't in the graph | It is not reachable from any branch shown. Enable **All branches**, or find it in the **Reflog**. Commits older than the newest 5,000 are not loaded into the graph; their details still open in the details pane |
+| A commit from the editor isn't in the graph | It is not reachable from any branch shown. Enable **All branches**, or find it in the **Reflog**. Commits older than the newest 5,000 are not loaded into the graph; their details open in the details pane instead of inline |
 | The view looks out of date after switching back to it | gitSt8 skips refreshes while its view is hidden and catches up when it becomes visible again. Press `F5` in the view to force a refresh |
 | `DEP0169 url.parse()` warning in the Debug Console | Comes from VS Code itself, not gitSt8. Harmless |
 | Integration chip says *Sign in* although you are signed in | The account may lack access to that organization or repository. On Azure DevOps, try a personal access token. Hover the chip for the exact error |

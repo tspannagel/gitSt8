@@ -8,3 +8,4 @@ CLAUDE.md
 **/*.vsix
 .gitignore
 .github/**
+.vscode-test/**

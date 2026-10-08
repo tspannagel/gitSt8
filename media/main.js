@@ -9,7 +9,7 @@
   const COLORS = ['#58a6ff', '#3fb950', '#d29922', '#f85149', '#a371f7', '#39c5cf', '#db61a2', '#e3b341', '#56d364', '#ff7b72'];
   // macOS has Cmd/Option instead of Ctrl/Alt, and Ctrl+click there opens the context menu.
   const MOD = /Mac/i.test(navigator.platform || navigator.userAgent) ? 'Cmd' : 'Ctrl';
-  const HELP = `Select a commit. ${MOD}+click to multi-select (2 = compare), Shift+click for a range.`;
+  const HELP = `Click a commit to see its details. ${MOD}+click to multi-select (2 = compare), Shift+click for a range.`;
 
   // Code points of VS Code's bundled codicon font (loaded by the extension).
   const ICONS = {
@@ -36,7 +36,8 @@
     selected: null, // last clicked commit (keyboard anchor)
     multi: [], // selected commits
     anchor: null, // shift-click anchor
-    details: null,
+    details: null, // details pane: the commit box by default, or stash / compare / reflog / multi
+    inline: null, // commit details shown in the graph, under the selected row
     filter: '',
     sideFilter: '',
     highlight: null, // file name/path to highlight in file lists
@@ -74,18 +75,26 @@
         if (m.data.integration !== undefined) S.integration = m.data.integration;
         renderAll();
         renderIntegration();
-        // The refresh already carries the working tree state, so an open commit box updates in place.
-        if (S.details?.kind === 'wip' && m.data.wip) {
+        // The refresh already carries the working tree state, so the commit box (the default pane) updates in place.
+        if ((!S.details || S.details.kind === 'wip') && m.data.wip) {
           S.details = m.data.wip;
           renderDetails();
         }
         break;
       case 'reset':
-        S.selected = S.anchor = S.details = S.highlight = null;
+        S.selected = S.anchor = S.details = S.inline = S.highlight = null;
         S.multi = [];
         renderDetails();
         break;
       case 'details':
+        // A commit in the graph opens inline under its row, so the commit box stays in the pane.
+        if (m.details.kind === 'commit' && commitBySha(m.details.commit.hash)) {
+          if (m.details.commit.hash !== S.selected) break; // stale: another row was clicked meanwhile
+          S.inline = m.details;
+          renderInline();
+          revealInline();
+          break;
+        }
         S.details = m.details;
         renderDetails();
         break;
@@ -98,8 +107,8 @@
         S.highlight = m.path || null;
         if (S.data?.commits?.length) select(S.data.commits[0].hash, true);
         else {
-          S.details = null;
-          $('#details').innerHTML = '<div class="empty">No commits match.</div>';
+          S.inline = null;
+          renderInline();
         }
         break;
       case 'repos':
@@ -641,18 +650,19 @@
     if (S.selected && !commitBySha(S.selected)) S.selected = null;
     applyMarks();
     applyFilter();
+    renderInline();
   }
 
   function applyMarks() {
     const sel = new Set(S.multi);
-    for (const tr of document.querySelectorAll('#graph tr')) tr.classList.toggle('sel', sel.has(tr.dataset.sha));
+    for (const tr of document.querySelectorAll('#graph tr[data-sha]')) tr.classList.toggle('sel', sel.has(tr.dataset.sha));
   }
 
   function applyFilter() {
     const f = S.filter.trim().toLowerCase();
     if (!S.data?.commits) return;
     const searching = $('#searchKind').value !== '';
-    for (const tr of document.querySelectorAll('#graph tr')) {
+    for (const tr of document.querySelectorAll('#graph tr[data-sha]')) {
       const c = S.data.commits[tr.dataset.i];
       const hit = searching || !f || c.subject.toLowerCase().includes(f) || (c.author || '').toLowerCase().includes(f) || c.hash.startsWith(f);
       tr.classList.toggle('dim', !hit);
@@ -741,6 +751,73 @@
     post('wipDetails');
   }
 
+  /** Message, metadata, checks and files of one commit. Used inline in the graph and in the pane. */
+  function commitHtml(d) {
+    const c = d.commit;
+    const [subject, ...rest] = c.message.split('\n');
+    const body = rest.join('\n').trim();
+    const long = body.split('\n').length > 14;
+    return `
+      <div class="d-head"><span class="d-subject">${esc(subject)}</span>
+        ${body ? `<span class="spacer"></span><button class="link" data-rawtoggle="1" title="Show the message as plain text or rendered Markdown">${S.rawBody ? 'Markdown' : 'Raw'}</button>` : ''}</div>
+      ${body ? `<div class="d-body ${S.rawBody ? 'raw' : 'md'} ${long && !S.bodyExpanded ? 'clamped' : ''}">${S.rawBody ? esc(body) : renderMarkdown(body)}</div>
+        ${long ? `<button class="link more" data-bodytoggle="1">${S.bodyExpanded ? 'Show less' : 'Show more'}</button>` : ''}` : ''}
+      <div class="d-meta">
+        <span>${esc(c.author)} &lt;${esc(c.email)}&gt; · ${absDate(c.date)}</span>
+        ${c.committer !== c.author ? `<span>committed by ${esc(c.committer)} · ${absDate(c.commitDate)}</span>` : ''}
+        <span><code>${c.hash}</code> <button class="link" data-copy="${c.hash}">copy</button></span>
+        <span>parents: ${c.parents.map(p => `<button class="link" data-goto="${p}">${p.slice(0, 7)}</button>`).join(' ') || 'none'}</span>
+        <span>${d.files.length} file(s)${c.parents.length > 1 ? ' (vs first parent)' : ''}</span>
+      </div>
+      ${checksBlock(c.hash)}
+      ${fileList(d.files, d.left, d.right)}`;
+  }
+
+  /** Lane lines that pass the inline details row, so the graph doesn't look cut. */
+  function laneSvg(i, width) {
+    const lines = S.data.rows[i].segs
+      .filter(s => s[3] === 1)
+      .map(([, , x, , c]) => `<path d="M${8 + x * LANE} 0V1" stroke="${COLORS[c % COLORS.length]}" stroke-width="2" vector-effect="non-scaling-stroke"/>`)
+      .join('');
+    return `<svg width="${width}" viewBox="0 0 ${width} 1" preserveAspectRatio="none">${lines}</svg>`;
+  }
+
+  function renderInline() {
+    document.querySelector('#graph tr.inline')?.remove();
+    const d = S.inline;
+    if (!d) return;
+    const tr = document.querySelector(`#graph tr[data-sha="${d.commit.hash}"]`);
+    if (!tr) {
+      S.inline = null;
+      return;
+    }
+    const width = parseInt($('#graph col.c-graph').style.width, 10) || 16;
+    tr.insertAdjacentHTML('afterend', `<tr class="inline"><td class="g">${laneSvg(+tr.dataset.i, width)}</td><td colspan="4"><div class="inline-details">${commitHtml(d)}</div></td></tr>`);
+  }
+
+  /** Scrolls so the opened details are visible, keeping their commit row on screen. */
+  function revealInline() {
+    const row = document.querySelector('#graph tr.inline');
+    if (!row) return;
+    if (row.offsetHeight < $('#graphWrap').clientHeight - ROW) row.scrollIntoView({ block: 'nearest' });
+    else row.previousElementSibling.scrollIntoView({ block: 'start' });
+  }
+
+  /** Back to the default pane content: the commit box. */
+  function showWip() {
+    if (S.details?.kind === 'wip') return;
+    if (S.data?.wip) {
+      S.details = S.data.wip;
+      renderDetails();
+    }
+    post('wipDetails');
+  }
+
+  const rerenderCommit = () => {
+    if (S.details?.kind === 'commit') renderDetails();
+    renderInline();
+  };
+
   function renderDetails() {
     const el = $('#details');
     const d = S.details;
@@ -749,24 +826,7 @@
       return;
     }
     if (d.kind === 'commit') {
-      const c = d.commit;
-      const [subject, ...rest] = c.message.split('\n');
-      const body = rest.join('\n').trim();
-      const long = body.split('\n').length > 14;
-      el.innerHTML = `
-        <div class="d-head"><span class="d-subject">${esc(subject)}</span>
-          ${body ? `<span class="spacer"></span><button class="link" data-rawtoggle="1" title="Show the message as plain text or rendered Markdown">${S.rawBody ? 'Markdown' : 'Raw'}</button>` : ''}</div>
-        ${body ? `<div class="d-body ${S.rawBody ? 'raw' : 'md'} ${long && !S.bodyExpanded ? 'clamped' : ''}">${S.rawBody ? esc(body) : renderMarkdown(body)}</div>
-          ${long ? `<button class="link more" data-bodytoggle="1">${S.bodyExpanded ? 'Show less' : 'Show more'}</button>` : ''}` : ''}
-        <div class="d-meta">
-          <span>${esc(c.author)} &lt;${esc(c.email)}&gt; · ${absDate(c.date)}</span>
-          ${c.committer !== c.author ? `<span>committed by ${esc(c.committer)} · ${absDate(c.commitDate)}</span>` : ''}
-          <span><code>${c.hash}</code> <button class="link" data-copy="${c.hash}">copy</button></span>
-          <span>parents: ${c.parents.map(p => `<button class="link" data-goto="${p}">${p.slice(0, 7)}</button>`).join(' ') || 'none'}</span>
-          <span>${d.files.length} file(s)${c.parents.length > 1 ? ' (vs first parent)' : ''}</span>
-        </div>
-        ${checksBlock(c.hash)}
-        ${fileList(d.files, d.left, d.right)}`;
+      el.innerHTML = commitHtml(d);
     } else if (d.kind === 'wip') {
       renderWip(el, d);
     } else if (d.kind === 'stash') {
@@ -831,8 +891,16 @@
     const c = commitBySha(sha);
     if (scroll) document.querySelector(`#graph tr[data-sha="${sha}"]`)?.scrollIntoView({ block: 'center' });
     if (!c) return;
-    if (c.wip) post('wipDetails');
-    else post('commitDetails', { sha });
+    if (S.inline && S.inline.commit.hash !== sha) {
+      S.inline = null;
+      renderInline();
+    }
+    if (c.wip) {
+      S.details = null;
+      return showWip();
+    }
+    showWip();
+    post('commitDetails', { sha });
   }
 
   function compare(a, b) {
@@ -844,10 +912,11 @@
   function showMulti() {
     applyMarks();
     const m = S.multi;
-    if (!m.length) {
-      S.details = null;
-      return renderDetails();
+    if (m.length !== 1 && S.inline) {
+      S.inline = null;
+      renderInline();
     }
+    if (!m.length) return showWip();
     if (m.length === 1) return select(m[0]);
     if (m.length === 2) {
       if (m.includes('WIP')) return compare(m.find(x => x !== 'WIP'), null);
@@ -1254,11 +1323,11 @@
     if (t.closest('[data-rawtoggle]')) {
       S.rawBody = !S.rawBody;
       persist();
-      return renderDetails();
+      return rerenderCommit();
     }
     if (t.closest('[data-bodytoggle]')) {
       S.bodyExpanded = !S.bodyExpanded;
-      return renderDetails();
+      return rerenderCommit();
     }
     const signIn = t.closest('[data-signin]');
     if (signIn) return post('signIn', { provider: signIn.dataset.signin });
@@ -1354,7 +1423,7 @@
       return;
     }
 
-    const tr = t.closest('#graph tr');
+    const tr = t.closest('#graph tr[data-sha]');
     if (tr) {
       const sha = tr.dataset.sha;
       if (e.shiftKey && S.anchor && commitBySha(S.anchor)) {
@@ -1368,6 +1437,11 @@
         S.selected = sha;
         if (S.multi.length === 1) S.anchor = S.multi[0];
         return showMulti();
+      }
+      // Clicking the open commit again closes its details.
+      if (S.inline?.commit.hash === sha && S.multi.length === 1 && S.selected === sha) {
+        S.inline = null;
+        return renderInline();
       }
       select(sha);
     }
@@ -1389,7 +1463,7 @@
     const group = t.closest('[data-remotegroup]');
     const secHead = t.closest('.sec-head');
     const file = t.closest('.files li[data-path]');
-    const tr = t.closest('#graph tr');
+    const tr = t.closest('#graph tr[data-sha]');
     const prEl = t.closest('[data-pr]');
     const ciEl = t.closest('[data-ci]');
     let items = null;

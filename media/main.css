@@ -433,6 +433,19 @@ body.layout-stack #detailsPane { grid-column: 2; grid-row: 3; }
 #graph td.author, #graph td.date, #graph td.sha { color: var(--muted); }
 #graph tr.sel td.author, #graph tr.sel td.date, #graph tr.sel td.sha { color: inherit; }
 #graph td.sha { font-family: var(--vscode-editor-font-family); font-size: 12px; }
+/* commit details opened inline under their row */
+#graph tr.inline, #graph tr.inline:hover { height: auto; cursor: auto; background: none; }
+#graph tr.inline td { height: auto; white-space: normal; overflow: visible; vertical-align: top; }
+#graph tr.inline td.g { position: relative; }
+#graph tr.inline td.g svg { position: absolute; inset: 0; height: 100%; }
+.inline-details {
+  margin: 2px 0 6px;
+  padding: 6px 10px;
+  max-height: 50vh;
+  overflow: auto;
+  border-left: 2px solid var(--vscode-focusBorder);
+  background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+}
 @media (max-width: 1100px) { #graph col.c-author { width: 0; } #graph td.author { padding: 0; } }
 
 .badge {
