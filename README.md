@@ -284,6 +284,19 @@ A worktree is a second checkout of the same repository in another folder. It let
 
 Trying to check out a branch that is already checked out in another worktree offers to open that worktree instead.
 
+### Submodules and Git LFS
+
+Two sidebar sections appear only when they apply, so repositories without them stay as fast and uncluttered as before.
+
+**Submodules** (the repository has a `.gitmodules` file). Each entry shows the submodule path and a badge: *not initialized*, *modified* (the checked-out commit differs from the one the repository records) or *conflict*. Hover for the URL, branch and the short recorded / checked-out commits.
+
+- **Open in gitSt8:** double-click, or right-click → *Open in gitSt8*, switches the view to the submodule's own repository. Also *Open in new window*, *Reveal in file explorer* and *Copy path*.
+- **Initialize & update** / **Update to recorded commit:** runs `git submodule update --init --recursive` for that submodule, which also clears a *modified* badge by checking out the recorded commit (commits made inside the submodule are not lost, they just are no longer checked out).
+- **Sync URL:** re-reads the URL from `.gitmodules` (`git submodule sync --recursive`).
+- Submodules **⋯** → *Update all* and *Sync all URLs*.
+
+**LFS** (`.gitattributes` contains `filter=lfs` and `git lfs` is installed). Shows how many files are tracked by LFS and how many are only pointer files (*not downloaded*). The **⋯** menu offers *Pull LFS files* (`git lfs pull`: download and check out) and *Fetch LFS files* (`git lfs fetch`: download only), with a progress notification. The file count is cached per HEAD commit, so it updates after the next commit or checkout, or after you use the LFS actions here (not after a `git lfs pull` in a terminal).
+
 ### Branch cleanup
 
 **Clean up** in the toolbar opens one checklist with three groups:

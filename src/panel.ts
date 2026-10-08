@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as crypto from 'crypto';
+import { Submodule } from './submodules';
 import { Commit, FileChange, GitCli, Head, LocalBranch, OpState, Query, QueryKind, Refs, StackEntry, StatusEntry, Worktree, EMPTY_TREE, appendIgnore, ignorePattern, splitRemoteRef } from './git';
 import { layout } from './graph';
 import { readBisect } from './bisect';
@@ -165,6 +166,7 @@ export class RepoPanel {
   private lastBase: string | null = null;
   private lastCommits?: Commit[];
   private lastWorktrees?: Worktree[];
+  private lastSubmodules?: Submodule[];
   private lastStack?: StackEntry[];
   private lastIntegration: IntegrationState | null = null;
   private integrationSeq = 0;
@@ -418,6 +420,9 @@ export class RepoPanel {
         wip: true,
       });
     }
+    // Both are skipped cheaply unless the repo has .gitmodules / LFS attributes.
+    const [submodules, lfs] = await Promise.all([git.submodules().catch(() => []), git.lfsSummary(head.sha).catch(() => null)]);
+    this.lastSubmodules = submodules;
     const g = layout(commits);
     this.lastHead = head;
     this.lastRefs = refs;
@@ -443,6 +448,8 @@ export class RepoPanel {
         query: this.query,
         tagSync: this.tagSync,
         worktrees,
+        submodules,
+        lfs,
         stack,
         base,
         staleDays: config().get('staleBranchDays', 60),
@@ -1826,6 +1833,55 @@ export class RepoPanel {
     );
     if (!pick) return;
     await this.runOp(`Apply ${path.basename(file[0].fsPath)}`, () => this.git().run([...pick.args, '--', file[0].fsPath], { env: { GIT_EDITOR: ':' } }), true);
+  }
+
+  // ---- submodules and LFS
+
+  /** Submodule paths from the webview must be ones git listed; returns the absolute folder. */
+  requireSubmodule(p: string): { sub: Submodule; abs: string } {
+    const sub = this.lastSubmodules?.find(s => s.path === String(p));
+    if (!sub) throw new Error(`Unknown submodule: ${p}`);
+    return { sub, abs: path.join(this.requireRoot(), sub.path) };
+  }
+
+  /** Without m.path, applies to all submodules. */
+  on_submoduleUpdate(m: Msg) {
+    const sub = m.path ? this.requireSubmodule(m.path).sub : null;
+    return this.runOp(sub ? `Update submodule ${sub.path}` : 'Update all submodules', () => this.git().run(['submodule', 'update', '--init', '--recursive', ...(sub ? ['--', sub.path] : [])]), true);
+  }
+
+  on_submoduleSync(m: Msg) {
+    const sub = m.path ? this.requireSubmodule(m.path).sub : null;
+    return this.runOp(sub ? `Sync submodule ${sub.path}` : 'Sync all submodules', () => this.git().run(['submodule', 'sync', '--recursive', ...(sub ? ['--', sub.path] : [])]));
+  }
+
+  async on_openSubmodule(m: Msg) {
+    const { sub, abs } = this.requireSubmodule(m.path);
+    if (sub.state === 'uninitialized') throw new Error(`${sub.path} is not initialized yet. Use Initialize & update first.`);
+    const uri = vscode.Uri.file(abs);
+    const repo = this.api.getRepository(uri) || (await this.api.openRepository(uri));
+    if (!repo) throw new Error(`VS Code's git extension could not open ${sub.path}.`);
+    this.setRoot(repo.rootUri.fsPath);
+  }
+
+  async on_openSubmoduleWindow(m: Msg) {
+    await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(this.requireSubmodule(m.path).abs), { forceNewWindow: true });
+  }
+
+  async on_revealSubmodule(m: Msg) {
+    await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(this.requireSubmodule(m.path).abs));
+  }
+
+  async on_lfsPull() {
+    const git = this.git();
+    await this.runOp('Pull LFS files', () => git.run(['lfs', 'pull']), true);
+    git.lfsInvalidate(); // runOp's refresh is still queued, so it sees the change
+  }
+
+  async on_lfsFetch() {
+    const git = this.git();
+    await this.runOp('Fetch LFS files', () => git.run(['lfs', 'fetch']), true);
+    git.lfsInvalidate(); // runOp's refresh is still queued, so it sees the change
   }
 
   // ---------------------------------------------------------------- html

@@ -1,6 +1,8 @@
 import * as cp from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import { LfsSummary, parseLfsFiles, summarizeLfs, usesLfs } from './lfs';
+import { Submodule, mergeSubmodules, parseGitlinks, parseGitmodules, parseSubmoduleStatus } from './submodules';
 
 const FS = '\x1f';
 const RS = '\x1e';
@@ -596,6 +598,47 @@ export class GitCli {
   /** True when a remote-tracking branch contains `ref`, i.e. the commit exists on a remote (as far as last fetched). */
   async onRemote(ref = 'HEAD'): Promise<boolean> {
     return (await this.tryRun(['branch', '-r', '--contains', ref])).trim().length > 0;
+  }
+
+  // ---- submodules and LFS
+
+  /** Empty without a .gitmodules file, so repos without submodules pay nothing. */
+  async submodules(): Promise<Submodule[]> {
+    if (!fs.existsSync(path.join(this.root, '.gitmodules'))) return [];
+    const [status, modules, links] = await Promise.all([
+      this.tryRun(['submodule', 'status', '--recursive']),
+      this.tryRun(['config', '-f', '.gitmodules', '-z', '--get-regexp', '^submodule\\.']),
+      this.tryRun(['ls-files', '-s', '-z']),
+    ]);
+    return mergeSubmodules(parseSubmoduleStatus(status), parseGitmodules(modules), parseGitlinks(links));
+  }
+
+  private lfsAvail?: Promise<boolean>;
+  private lfsCache?: { key: string; summary: LfsSummary };
+
+  /** Checked once per GitCli. */
+  lfsAvailable(): Promise<boolean> {
+    return (this.lfsAvail ||= this.ok(['lfs', 'version']));
+  }
+
+  /** null when the repo does not use LFS or git-lfs is missing. Cached per HEAD; call lfsInvalidate() after pull/fetch. */
+  async lfsSummary(headSha: string | null): Promise<LfsSummary | null> {
+    let attrs = '';
+    try {
+      attrs = fs.readFileSync(path.join(this.root, '.gitattributes'), 'utf8');
+    } catch {
+      return null;
+    }
+    if (!usesLfs(attrs) || !(await this.lfsAvailable())) return null;
+    const key = headSha || '';
+    if (this.lfsCache?.key === key) return this.lfsCache.summary;
+    const summary = summarizeLfs(parseLfsFiles(await this.tryRun(['lfs', 'ls-files'])));
+    this.lfsCache = { key, summary };
+    return summary;
+  }
+
+  lfsInvalidate(): void {
+    this.lfsCache = undefined;
   }
 }
 
