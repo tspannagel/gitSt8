@@ -1,0 +1,199 @@
+{
+  "name": "gitst8",
+  "displayName": "gitSt8",
+  "description": "One view for advanced git workflows: graph history, search, fetch/prune, branch, merge, rebase (incl. interactive), stacks, worktrees, tags, reflog undo, compare and diff.",
+  "version": "0.0.2",
+  "publisher": "local",
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "SCM Providers",
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -watch -p .",
+    "test": "tsc -p . && node --test \"out/test/**/*.test.js\"",
+    "vscode:prepublish": "npm run compile"
+  },
+  "extensionDependencies": [
+    "vscode.git"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "panel": [
+        {
+          "id": "gitst8",
+          "title": "gitSt8",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "gitst8": [
+        {
+          "type": "webview",
+          "id": "gitst8.view",
+          "name": "gitSt8",
+          "when": "config.gitst8.location != editor"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "gitst8.open",
+        "title": "Open Repository View",
+        "category": "gitSt8",
+        "icon": "$(git-merge)"
+      },
+      {
+        "command": "gitst8.fetchPrune",
+        "title": "Fetch All & Prune",
+        "category": "gitSt8",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "gitst8.revealLineCommit",
+        "title": "Show Line's Commit in gitSt8",
+        "category": "gitSt8"
+      },
+      {
+        "command": "gitst8.signInGitHub",
+        "title": "Sign in to GitHub",
+        "category": "gitSt8"
+      },
+      {
+        "command": "gitst8.signInAzure",
+        "title": "Sign in to Azure DevOps",
+        "category": "gitSt8"
+      },
+      {
+        "command": "gitst8.setAzurePat",
+        "title": "Set Azure DevOps Personal Access Token",
+        "category": "gitSt8"
+      },
+      {
+        "command": "gitst8.clearAzurePat",
+        "title": "Remove Azure DevOps Personal Access Token",
+        "category": "gitSt8"
+      },
+      {
+        "command": "gitst8.fileHistory",
+        "title": "File History in gitSt8",
+        "category": "gitSt8",
+        "icon": "$(history)"
+      }
+    ],
+    "menus": {
+      "scm/title": [
+        {
+          "command": "gitst8.open",
+          "group": "navigation",
+          "when": "scmProvider == git"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "gitst8.revealLineCommit",
+          "group": "gitst8@1",
+          "when": "resourceScheme == file"
+        },
+        {
+          "command": "gitst8.fileHistory",
+          "group": "gitst8@2",
+          "when": "resourceScheme == file"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "command": "gitst8.fileHistory",
+          "group": "gitst8",
+          "when": "resourceScheme == file"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "gitst8.fileHistory",
+          "group": "gitst8",
+          "when": "resourceScheme == file"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "gitst8.revealLineCommit",
+          "when": "editorIsOpen"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "gitst8.open",
+        "key": "ctrl+alt+shift+g",
+        "mac": "cmd+alt+shift+g"
+      },
+      {
+        "command": "gitst8.revealLineCommit",
+        "key": "ctrl+alt+shift+b",
+        "mac": "cmd+alt+shift+b",
+        "when": "editorTextFocus"
+      }
+    ],
+    "configuration": {
+      "title": "gitSt8",
+      "properties": {
+        "gitst8.location": {
+          "type": "string",
+          "enum": [
+            "panel",
+            "editor"
+          ],
+          "enumDescriptions": [
+            "Bottom panel, next to Terminal, Problems and Output (drag the tab to move it).",
+            "Editor tab."
+          ],
+          "default": "panel",
+          "description": "Where gitSt8 opens."
+        },
+        "gitst8.stackBase": {
+          "type": "string",
+          "default": "",
+          "description": "Base branch for the stack view and branch cleanup (e.g. origin/main). Empty: origin/HEAD, then main/master/develop."
+        },
+        "gitst8.staleBranchDays": {
+          "type": "number",
+          "default": 60,
+          "minimum": 1,
+          "description": "Local branches without commits for this many days are marked stale and offered in Clean up."
+        },
+        "gitst8.integrations.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show pipeline/Actions status and pull requests for repositories hosted on GitHub or Azure DevOps."
+        },
+        "gitst8.integrations.remote": {
+          "type": "string",
+          "default": "",
+          "description": "Remote to use for GitHub / Azure DevOps integration. Empty: 'origin', else the first remote on a supported host."
+        },
+        "gitst8.integrations.commitsToCheck": {
+          "type": "number",
+          "default": 60,
+          "minimum": 0,
+          "maximum": 300,
+          "description": "How many of the newest commits in the graph get a CI status (branch and tag tips are always included)."
+        }
+      }
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.9.3"
+  }
+}
