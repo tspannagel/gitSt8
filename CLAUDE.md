@@ -36,7 +36,7 @@ npm run package    # vsce package -> .vsix; release via .github/workflows/publis
 - **Network operations** (fetch, default pull, push, commit) use the vscode.git API (`requireRepo()`), so credentials, signing and settings match VS Code. Force-push, remote deletes and tag pushes use the CLI (`git()`).
 - **Never open an editor from git:** set `GIT_EDITOR=':'`. Interactive rebase uses `GIT_SEQUENCE_EDITOR="cp '<todo>'"` (Git for Windows runs it through sh, so use forward slashes). `runTodo()` does this.
 - **CLI calls** always add `--no-optional-locks` and `GIT_TERMINAL_PROMPT=0` (inside `GitCli.run`). Parse with `%x1f` / `%x1e` separators and `-z`, never by splitting on spaces.
-- **Graph first, integration after:** `collect()` posts `data`, then `scheduleIntegration()` loads PRs/CI and posts `integration`. A slow service must never delay the graph. Integration only reads; it never writes to GitHub/Azure DevOps (create/checkout PR is a planned next phase).
+- **Graph first, integration after:** `collect()` posts `data`, then `scheduleIntegration()` loads PRs/CI and posts `integration`. A slow service must never delay the graph. Integration reads in the background; the only writes are create-PR (`on_createPr` → `Integrations.createPullRequest`), which happen on explicit user action after a confirmation step. Check-out PR branch only uses git.
 - **GraphQL safety:** SHAs are interpolated into GitHub queries, so they are filtered to 40-char hex first. Keep that filter.
 
 ### Webview rules

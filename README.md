@@ -276,7 +276,7 @@ Remotes **⋯** → **Add remote**. Right-click a remote's name for **Fetch & pr
 
 ### GitHub and Azure DevOps
 
-When a remote points at GitHub, GitHub Enterprise or Azure DevOps, gitSt8 shows hosting-service information next to your history. It is read-only: nothing is changed on the server.
+When a remote points at GitHub, GitHub Enterprise or Azure DevOps, gitSt8 shows hosting-service information next to your history. Status is read in the background; the only thing gitSt8 ever writes to the server is a pull request you explicitly create (below).
 
 | Where | What you see |
 | --- | --- |
@@ -290,6 +290,12 @@ When a remote points at GitHub, GitHub Enterprise or Azure DevOps, gitSt8 shows 
 
 - **GitHub**: the built-in GitHub account (scope `repo`). For GitHub Enterprise, set `github-enterprise.uri`.
 - **Azure DevOps**: your Microsoft (Entra ID) account. If your organization blocks that, or you use an MSA-backed organization, use a personal access token with *Code (read)* and *Build (read)* scopes: **gitSt8: Set Azure DevOps Personal Access Token**. Tokens live in VS Code's secret storage, either for all organizations or for one.
+
+**Create a pull request.** Right-click a local branch without an open PR and choose *Create pull request…*. If the branch is not on the integration remote yet, or is ahead of it, you are asked to push first. Then pick the target branch (default: the stack base), edit the title (the commit subject when there is exactly one commit, else the humanized branch name), and choose *Create* or *Create as draft*. The description is a bullet list of the commit subjects. Nothing is sent until you confirm the last step; afterwards a notification offers *Open in Browser*.
+
+**Check out a PR branch.** Right-click a PR pill and choose *Check out PR branch*. A PR from the same repository fetches its branch and checks out a tracking branch. A GitHub fork PR is fetched from `pull/<n>/head` into a local `pr/<n>` branch (you are asked what to do if it already exists). Azure DevOps fork PRs cannot be fetched this way.
+
+**Token scopes for writes.** GitHub needs the `repo` scope (the built-in sign-in has it). An Azure DevOps personal access token needs *Code (Read & write)* to create pull requests, in addition to the read scopes. If the service refuses, gitSt8 tells you which scope is missing.
 
 Until you sign in, the chip shows a **Sign in** button. gitSt8 never opens a sign-in prompt on its own.
 

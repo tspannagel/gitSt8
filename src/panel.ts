@@ -6,6 +6,7 @@ import { Commit, FileChange, GitCli, Head, LocalBranch, OpState, Query, QueryKin
 import { layout } from './graph';
 import { Integrations, IntegrationState } from './integration';
 import { ProviderId } from './providers/types';
+import { defaultBody, defaultTitle, prHeadRefspec } from './prdraft';
 import type { API, Repository } from './types/git';
 
 const PAGE = 400;
@@ -1533,6 +1534,105 @@ export class RepoPanel {
   async on_stashBranch(m: Msg) {
     const name = await vscode.window.showInputBox({ prompt: `New branch from ${m.ref} (applies and drops the stash)` });
     if (name) await this.runOp(`Branch from ${m.ref}`, () => this.git().run(['stash', 'branch', name, m.ref]));
+  }
+
+  // ---- pull requests (create via API, check out)
+
+  /** Creates a pull request for a local branch. The only write to the hosting service; every step is explicit. */
+  async on_createPr(m: Msg) {
+    const name = String(m.name || '');
+    const b = this.localBranch(name);
+    const target = this.integrations.detect(this.refs().remoteInfo);
+    if (!b || !target) return vscode.window.showWarningMessage('No supported hosting service (GitHub / Azure DevOps) found for this repository.');
+    const { remote, repo } = target;
+    const existing = this.lastIntegration?.prs.find(p => p.sourceBranch === name && !p.fromFork);
+    if (existing) return vscode.window.showInformationMessage(`'${name}' already has pull request #${existing.number}.`);
+    const git = this.git();
+
+    // Push first when the branch is not on the integration remote yet, or is ahead of it.
+    const up = b.upstream && !b.gone ? this.splitUpstream(b.upstream) : null;
+    const onRemote = !!up && up.remote === remote;
+    const source = onRemote ? up!.branch : name;
+    if (!onRemote || b.ahead > 0) {
+      const why = !onRemote ? `'${name}' is not on ${remote} yet.` : `'${name}' is ${b.ahead} commit(s) ahead of ${b.upstream}.`;
+      const ok = await this.confirm(`Push '${name}' to ${remote} first?`, `${why} A pull request only contains what is on the server.`, 'Push');
+      if (!ok) return;
+      if (onRemote) await this.pushBranch(name, false);
+      else if (!(await this.runOp(`Push ${name}`, () => this.requireRepo().push(remote, `${name}:${source}`, !b.upstream), true))) return;
+    }
+
+    // Target branch: remote branches on the integration remote, default = the stack base.
+    const remoteBranches = this.refs().remote.filter(r => r.remote === remote && r.branch !== 'HEAD' && r.branch !== source);
+    if (!remoteBranches.length) return vscode.window.showWarningMessage(`No other branches found on ${remote}. Fetch first.`);
+    const base = (await git.defaultBase(config().get<string>('stackBase'))) || '';
+    const defaultTarget = base.startsWith(remote + '/') ? base.slice(remote.length + 1) : base;
+    const items: PickItem[] = remoteBranches.map(r => ({ label: r.branch, id: r.branch, description: r.branch === defaultTarget ? 'default' : '' }));
+    items.sort((a, c) => (c.description ? 1 : 0) - (a.description ? 1 : 0));
+    const tpick = await vscode.window.showQuickPick<PickItem>(items, { placeHolder: `Target branch for '${source}' on ${remote}` });
+    if (!tpick?.id) return;
+    const targetBranch = tpick.id;
+
+    const subjects = (await git.tryRun(['log', '--reverse', '--format=%s', `${remote}/${targetBranch}..${name}`, '--'])).split('\n').filter(Boolean);
+    const title = await vscode.window.showInputBox({
+      prompt: `Pull request title (${source} → ${targetBranch})`,
+      value: defaultTitle(name, subjects),
+      validateInput: v => (v.trim() ? null : 'A title is required'),
+    });
+    if (!title?.trim()) return;
+    const body = defaultBody(subjects);
+    const summary = `${title.trim()}  —  ${source} → ${targetBranch}, ${subjects.length} commit(s)`;
+    const fpick = await vscode.window.showQuickPick<PickItem>(
+      [{ label: '$(git-pull-request) Create', id: 'create' }, { label: '$(git-pull-request-draft) Create as draft', id: 'draft' }, { label: '$(close) Cancel', id: 'cancel' }],
+      { placeHolder: summary }
+    );
+    if (!fpick || fpick.id === 'cancel') return;
+
+    let pr;
+    try {
+      pr = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Creating pull request…' }, () =>
+        this.integrations.createPullRequest(repo, { source, target: targetBranch, title: title.trim(), body, draft: fpick.id === 'draft' })
+      );
+    } catch (e) {
+      return void vscode.window.showErrorMessage(`gitSt8: ${errText(e)}`);
+    }
+    const open = await vscode.window.showInformationMessage(`Created pull request #${pr.number}: ${pr.title}`, 'Open in Browser');
+    if (open) await vscode.env.openExternal(vscode.Uri.parse(pr.url));
+  }
+
+  /** Checks out the branch of an open pull request (same-repo: tracking branch; GitHub fork: pr/<n> from the pull ref). */
+  async on_checkoutPr(m: Msg) {
+    const n = Number(m.number);
+    const st = this.lastIntegration;
+    const pr = st?.prs.find(p => p.number === n);
+    if (!st || !pr) return vscode.window.showWarningMessage(`Pull request #${m.number} is not known (refresh and retry).`);
+    const git = this.git();
+    if (!pr.fromFork) {
+      const refspec = `+refs/heads/${pr.sourceBranch}:refs/remotes/${st.remote}/${pr.sourceBranch}`;
+      if (!(await this.runOp(`Fetch ${st.remote}/${pr.sourceBranch}`, () => git.run(['fetch', st.remote, refspec]), true))) return;
+      return this.on_checkout({ kind: 'remote', name: `${st.remote}/${pr.sourceBranch}`, branch: pr.sourceBranch });
+    }
+    const spec = prHeadRefspec(st.provider, n);
+    if (!spec) return void vscode.window.showInformationMessage(`#${n} comes from a fork. Azure DevOps does not expose fork pull request heads as branches; check it out from the fork's remote instead.`);
+    const local = `pr/${n}`;
+    if (this.localBranch(local)) {
+      const pick = await vscode.window.showQuickPick<PickItem>(
+        [
+          { label: `Checkout existing '${local}'`, id: 'local' },
+          { label: `Update '${local}' to the current PR head and check it out`, id: 'reset', description: 'discards local commits on that branch' },
+        ],
+        { placeHolder: `A local branch '${local}' already exists` }
+      );
+      if (!pick) return;
+      if (pick.id === 'local') return this.runOp(`Checkout ${local}`, () => git.run(['checkout', local]));
+      return this.runOp(`Checkout ${local}`, async () => {
+        await git.run(['fetch', st.remote, `pull/${n}/head`]);
+        await git.run(['checkout', '-B', local, 'FETCH_HEAD']);
+      }, true);
+    }
+    await this.runOp(`Checkout PR #${n}`, async () => {
+      await git.run(['fetch', st.remote, spec]);
+      await git.run(['checkout', local]);
+    }, true);
   }
 
   // ---------------------------------------------------------------- html

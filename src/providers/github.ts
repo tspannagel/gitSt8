@@ -1,6 +1,6 @@
 import { toStatus } from './ci';
-import { requestJson } from './http';
-import { AuthHeader, CiCheck, CiState, CiStatus, ProviderClient, PullRequest, RepoRef, ReviewState } from './types';
+import { HttpError, requestJson } from './http';
+import { AuthError, AuthHeader, NewPullRequest, CiCheck, CiState, CiStatus, ProviderClient, PullRequest, RepoRef, ReviewState } from './types';
 
 const BATCH = 40;
 
@@ -112,6 +112,30 @@ export function mapPullRequest(p: GqlPr): PullRequest {
   };
 }
 
+const PR_FIELDS = `number title url isDraft headRefName baseRefName headRefOid isCrossRepository reviewDecision
+  author { login }
+  commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }`;
+
+export const CREATE_PR_MUTATION = `mutation($repositoryId: ID!, $base: String!, $head: String!, $title: String!, $body: String, $draft: Boolean) {
+  createPullRequest(input: { repositoryId: $repositoryId, baseRefName: $base, headRefName: $head, title: $title, body: $body, draft: $draft }) {
+    pullRequest { ${PR_FIELDS} }
+  }
+}`;
+
+/** GraphQL variables for the createPullRequest mutation; user text only ever travels as variables. */
+export function createPullRequestVariables(repositoryId: string, i: NewPullRequest): Record<string, unknown> {
+  return { repositoryId, base: i.target, head: i.source, title: i.title, body: i.body, draft: i.draft };
+}
+
+/** Turns auth and "already exists" failures into messages that say what to do. */
+export function friendlyCreateError(e: unknown): Error {
+  const msg = e instanceof Error ? e.message : String(e);
+  if (/pull request already exists/i.test(msg)) return new Error('A pull request for this branch already exists.');
+  if (e instanceof AuthError) return new Error('GitHub refused to create the pull request. The sign-in needs the "repo" scope and write access to the repository.');
+  if (e instanceof HttpError && (e.status === 401 || e.status === 403)) return new Error('GitHub refused to create the pull request: the token needs the "repo" scope.');
+  return e instanceof Error ? e : new Error(msg);
+}
+
 export class GitHubClient implements ProviderClient {
   constructor(private readonly auth: (host: string) => Promise<AuthHeader>) {}
 
@@ -161,5 +185,17 @@ export class GitHubClient implements ProviderClient {
       })
     );
     return result;
+  }
+
+  async createPullRequest(repo: RepoRef, input: NewPullRequest): Promise<PullRequest> {
+    try {
+      const idq = `query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { id } }`;
+      const r = await this.graphql<{ repository: { id: string } | null }>(repo.host, idq, { owner: repo.owner, name: repo.repo });
+      if (!r.repository) throw new Error(`Repository ${repo.owner}/${repo.repo} not found or not accessible.`);
+      const data = await this.graphql<{ createPullRequest: { pullRequest: GqlPr } }>(repo.host, CREATE_PR_MUTATION, createPullRequestVariables(r.repository.id, input));
+      return mapPullRequest(data.createPullRequest.pullRequest);
+    } catch (e) {
+      throw friendlyCreateError(e);
+    }
   }
 }
