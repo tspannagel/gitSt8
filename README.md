@@ -122,6 +122,8 @@ Options:
 - **Skip hooks** runs `--no-verify`.
 - If nothing is staged, the button turns into **Stage all & commit**.
 
+**Generate a message.** When a language model is available (VS Code's Language Model API, for example through GitHub Copilot), a sparkle button appears next to the message box. Click it to draft a message from your staged diff, or from all tracked changes if nothing is staged. The text streams into the box and the button turns into a stop button while it runs. The prompt includes the diff (long diffs are shortened per file), the file summary, the branch name and your last 15 commit subjects, so the message follows your repository's style, including Conventional Commits when you use them. An empty box is replaced; if you already typed a draft it stays, and the generated text is added below a `--- generated ---` line for you to pick from. Edit it before you commit. **Privacy:** your diff is sent to the model provider only when you click the button. Turn the feature off with `gitst8.ai.enabled`.
+
 Commits go through VS Code's Git extension, so commit signing and `git.*` settings behave exactly as in the Source Control view. Your draft message survives refreshes.
 
 ### Fetch, pull, push
@@ -335,6 +337,8 @@ Rebind these in **Keyboard Shortcuts** (`Ctrl+K Ctrl+S`, on macOS `Cmd+K Cmd+S`;
 | `gitst8.location` | `panel` | `panel`: bottom panel next to the terminal. `editor`: an editor tab |
 | `gitst8.stackBase` | `""` | Base branch for the Stack section and branch cleanup. Empty means auto-detect |
 | `gitst8.staleBranchDays` | `60` | Days without commits before a branch is marked stale |
+| `gitst8.ai.enabled` | `true` | Show the button that drafts a commit message with a language model. Hidden when no model is available |
+| `gitst8.ai.modelFamily` | `""` | Model family for commit messages (for example `gpt-4o`). Empty: first available model, Copilot preferred |
 | `gitst8.integrations.enabled` | `true` | Show pull requests and CI status from GitHub / Azure DevOps |
 | `gitst8.integrations.remote` | `""` | Remote to integrate with. Empty: `origin`, else the first supported remote |
 | `gitst8.integrations.commitsToCheck` | `60` | Newest commits that get a CI status (branch tips are always included) |

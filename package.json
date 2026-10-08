@@ -194,6 +194,16 @@
           "minimum": 1,
           "description": "Local branches without commits for this many days are marked stale and offered in Clean up."
         },
+        "gitst8.ai.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the button that drafts a commit message with a language model (e.g. Copilot). The diff is sent to the model provider only when you click it."
+        },
+        "gitst8.ai.modelFamily": {
+          "type": "string",
+          "default": "",
+          "description": "Language model family used to draft commit messages (for example gpt-4o). Empty uses the first available model, preferring Copilot."
+        },
         "gitst8.integrations.enabled": {
           "type": "boolean",
           "default": true,
