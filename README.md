@@ -205,6 +205,27 @@ For inline blame annotations, use VS Code's built-in setting `git.blame.editorDe
 - Right-click → **Compare with HEAD** / **Compare with working tree** / **Compare with ‹upstream›**.
 - Click any file in the list to open the side-by-side diff.
 
+### Patches and links
+
+**Patches.** Right-click a commit → **Copy as patch** or **Save as patch…** (`git format-patch`; hidden for merge commits). Select several commits and right-click → **Save as patch files…** to write one numbered file per commit (oldest first) into a folder you pick.
+
+To apply one, right-click **Stash** in the toolbar (or the Stashes section menu, or run **gitSt8: Apply Patch…**) → **Apply patch…**, choose the file, then how to apply it:
+
+- **As commits** (`git am --3way`): keeps author, date and message.
+- **To the working tree** (`git apply --3way`): leaves the changes uncommitted.
+- **To the index** (`git apply --cached`): stages them without touching files.
+
+If `git am` stops on a conflict, the banner shows **Applying patches** with Continue, Skip and Abort.
+
+**Copy helpers.** The commit menu also has **Copy short SHA** and **Copy full message**.
+
+**Links to GitHub / Azure DevOps.** These only build URLs from the remote, so they work without signing in.
+
+- Commit menu: **Open commit on GitHub / Azure DevOps** and **Copy link to commit**.
+- File menu in the details pane: **Open file on …** and **Copy permalink** (pinned to that commit).
+- Branch menu: **Create pull request in browser…** for pushed branches that have no open pull request. The target is the stack base. If the branch is ahead of its upstream, gitSt8 offers to push first.
+- Editor right-click or command palette → **Copy Permalink to Line(s)** links the selection at the current HEAD commit. If HEAD is not on any remote-tracking branch, gitSt8 warns that the link may not work yet.
+
 ---
 
 ## Advanced workflows
@@ -311,6 +332,8 @@ In a multi-root workspace, or a folder with nested repositories, the repository 
 | --- | --- | --- |
 | `gitSt8: Open Repository View` | `Ctrl+Alt+Shift+G` / macOS `Cmd+Option+Shift+G` | Open or focus the view |
 | `gitSt8: Show Line's Commit in gitSt8` | `Ctrl+Alt+Shift+B` / macOS `Cmd+Option+Shift+B` (editor focused) | Jump to the commit of the line under the cursor |
+| `gitSt8: Copy Permalink to Line(s)` | | Copies a GitHub / Azure DevOps link to the selected lines at the current HEAD commit (also in the editor right-click menu) |
+| `gitSt8: Apply Patch…` | | Apply a `.patch`, `.diff` or `.mbox` file |
 | `gitSt8: File History in gitSt8` | | History of the active or right-clicked file or folder |
 | `gitSt8: Fetch All & Prune` | | Fetch and prune every open repository |
 | `gitSt8: Sign in to GitHub` / `Sign in to Azure DevOps` | | Sign in for pull requests and CI status |

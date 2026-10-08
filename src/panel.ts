@@ -6,6 +6,7 @@ import { Commit, FileChange, GitCli, Head, LocalBranch, OpState, Query, QueryKin
 import { layout } from './graph';
 import { Integrations, IntegrationState } from './integration';
 import { ProviderId } from './providers/types';
+import { branchUrl, commitUrl, createPrUrl, fileUrl, providerName } from './providers/links';
 import type { API, Repository } from './types/git';
 
 const PAGE = 400;
@@ -1265,6 +1266,7 @@ export class RepoPanel {
       merge: ['commit', '--no-edit'],
       'cherry-pick': ['cherry-pick', '--continue'],
       revert: ['revert', '--continue'],
+      am: ['am', '--continue'],
     }[op.kind];
     await this.runOp(`Continue ${op.kind}`, () => git.run(cmd, { env }));
   }
@@ -1533,6 +1535,111 @@ export class RepoPanel {
   async on_stashBranch(m: Msg) {
     const name = await vscode.window.showInputBox({ prompt: `New branch from ${m.ref} (applies and drops the stash)` });
     if (name) await this.runOp(`Branch from ${m.ref}`, () => this.git().run(['stash', 'branch', name, m.ref]));
+  }
+
+  // ---- patches, copy helpers, links to the hosting service
+
+  /** Web links need no API access: only the detected remote URL. */
+  private hostRepo() {
+    const t = this.integrations.detect(this.refs().remoteInfo);
+    if (!t) vscode.window.showInformationMessage('gitSt8: no GitHub or Azure DevOps remote found.');
+    return t;
+  }
+
+  /** m.what: 'commit' | 'file' (needs m.path); m.action: 'open' | 'copy'. */
+  async on_hostLink(m: Msg) {
+    const t = this.hostRepo();
+    if (!t) return;
+    if (!/^[0-9a-f]{40}$/.test(String(m.sha))) return vscode.window.showWarningMessage('gitSt8: that item has no commit to link to.');
+    const url = m.what === 'file' ? fileUrl(t.repo, m.sha, String(m.path)) : commitUrl(t.repo, m.sha);
+    if (m.action === 'copy') {
+      await vscode.env.clipboard.writeText(url);
+      return vscode.window.setStatusBarMessage('gitSt8: link copied to clipboard', 2000);
+    }
+    await this.on_openExternal({ type: 'openExternal', url });
+  }
+
+  /** Opens the provider's "new pull request" page for a pushed branch, targeting the stack base. */
+  async on_createPr(m: Msg) {
+    const t = this.hostRepo();
+    const b = this.localBranch(m.name);
+    if (!t || !b) return;
+    const up = b.upstream && !b.gone ? this.splitUpstream(b.upstream) : null;
+    if (!up || up.remote !== t.remote) return vscode.window.showWarningMessage(`gitSt8: '${b.name}' has no upstream on ${t.remote}. Push it first.`);
+    if (b.ahead > 0) {
+      const ok = await this.confirm(`'${b.name}' is ${b.ahead} commit(s) ahead of ${b.upstream}.`, 'The pull request only contains what is pushed.', 'Push First', 'Continue Without Pushing');
+      if (!ok) return;
+      if (ok === 'Push First') {
+        await this.pushBranch(b.name, false);
+        // The refs snapshot is stale until the refresh lands, so ask git; still ahead means the push failed or was cancelled.
+        if (Number((await this.git().tryRun(['rev-list', '--count', `${b.upstream}..${b.name}`], '1')).trim())) return;
+      }
+    }
+    let target = this.lastBase ? (this.lastBase.startsWith(`${t.remote}/`) ? this.lastBase.slice(t.remote.length + 1) : this.lastBase) : '';
+    if (!target) target = (await vscode.window.showInputBox({ prompt: 'Target branch of the pull request' })) || '';
+    if (!target) return;
+    if (target === up.branch) return vscode.window.showWarningMessage(`gitSt8: '${b.name}' is the target branch itself.`);
+    await this.on_openExternal({ type: 'openExternal', url: createPrUrl(t.repo, up.branch, target) });
+  }
+
+  /** Branch page on the hosting service. */
+  async on_openBranchOnHost(m: Msg) {
+    const t = this.hostRepo();
+    if (t) await this.on_openExternal({ type: 'openExternal', url: branchUrl(t.repo, String(m.branch)) });
+  }
+
+  async on_copyMessage(m: Msg) {
+    const msg = (await this.git().run(['show', '-s', '--format=%B', m.sha])).replace(/\s+$/, '');
+    await vscode.env.clipboard.writeText(msg);
+    vscode.window.setStatusBarMessage('gitSt8: message copied to clipboard', 2000);
+  }
+
+  private isMerge(sha: string) {
+    return ((this.lastCommits || []).find(c => c.hash === sha)?.parents.length ?? 0) > 1;
+  }
+
+  async on_copyPatch(m: Msg) {
+    if (this.isMerge(m.sha)) return vscode.window.showWarningMessage('gitSt8: patches of merge commits are not supported.');
+    await vscode.env.clipboard.writeText(await this.git().formatPatch(m.sha));
+    vscode.window.setStatusBarMessage('gitSt8: patch copied to clipboard', 2000);
+  }
+
+  async on_savePatch(m: Msg) {
+    if (this.isMerge(m.sha)) return vscode.window.showWarningMessage('gitSt8: patches of merge commits are not supported.');
+    const subject = (this.lastCommits || []).find(c => c.hash === m.sha)?.subject || short(m.sha);
+    const name = subject.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 50) || short(m.sha);
+    const uri = await vscode.window.showSaveDialog({
+      defaultUri: vscode.Uri.file(path.join(this.requireRoot(), `${name}.patch`)),
+      filters: { Patch: ['patch', 'diff'] },
+    });
+    if (!uri) return;
+    fs.writeFileSync(uri.fsPath, await this.git().formatPatch(m.sha));
+    vscode.window.setStatusBarMessage(`gitSt8: saved ${path.basename(uri.fsPath)}`, 3000);
+  }
+
+  /** m.shas arrive oldest first; merges are skipped. */
+  async on_savePatches(m: Msg) {
+    const shas = (m.shas as string[]).filter(s => !this.isMerge(s));
+    if (!shas.length) return vscode.window.showWarningMessage('gitSt8: no commits that can be turned into patches.');
+    const dir = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, canSelectMany: false, defaultUri: vscode.Uri.file(this.requireRoot()), openLabel: 'Save Patches Here' });
+    if (!dir) return;
+    const files = await this.git().formatPatches(dir[0].fsPath, shas);
+    vscode.window.showInformationMessage(`gitSt8: saved ${files.length} patch file(s) to ${dir[0].fsPath}.`);
+  }
+
+  async on_applyPatch() {
+    const file = await vscode.window.showOpenDialog({ canSelectMany: false, filters: { Patches: ['patch', 'diff', 'mbox'], 'All files': ['*'] }, openLabel: 'Apply Patch' });
+    if (!file) return;
+    const pick = await vscode.window.showQuickPick(
+      [
+        { label: 'Apply as commits (git am --3way)', detail: 'Keeps author, date and message. Needs a patch made by format-patch.', args: ['am', '--3way'] },
+        { label: 'Apply to working tree (git apply --3way)', detail: 'Leaves the changes uncommitted (and staged where they merged cleanly).', args: ['apply', '--3way'] },
+        { label: 'Apply to index (git apply --cached)', detail: 'Stages the changes without touching the working tree.', args: ['apply', '--cached'] },
+      ],
+      { placeHolder: `Apply ${path.basename(file[0].fsPath)}` }
+    );
+    if (!pick) return;
+    await this.runOp(`Apply ${path.basename(file[0].fsPath)}`, () => this.git().run([...pick.args, '--', file[0].fsPath], { env: { GIT_EDITOR: ':' } }), true);
   }
 
   // ---------------------------------------------------------------- html

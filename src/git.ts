@@ -115,7 +115,7 @@ export interface FileChange {
   oldPath?: string;
 }
 
-export type OpKind = 'rebase' | 'merge' | 'cherry-pick' | 'revert';
+export type OpKind = 'rebase' | 'merge' | 'cherry-pick' | 'revert' | 'am';
 
 export interface OpState {
   kind: OpKind;
@@ -374,6 +374,9 @@ export class GitCli {
         branch: read('rebase-merge/head-name').replace(/^refs\/heads\//, ''),
         onto: read('rebase-merge/onto'),
       };
+    } else if (exists('rebase-apply/applying')) {
+      // git am (patch series) also uses rebase-apply; the marker file tells it apart from rebase.
+      state = { kind: 'am', step: Number(read('rebase-apply/next')) || 0, total: Number(read('rebase-apply/last')) || 0 };
     } else if (exists('rebase-apply')) {
       state = {
         kind: 'rebase',
@@ -561,6 +564,26 @@ export class GitCli {
       if (peeled || !tags[name]) tags[name] = sha;
     }
     return tags;
+  }
+
+  /** `git format-patch` output of one commit (not for merges). */
+  async formatPatch(sha: string): Promise<string> {
+    return this.run(['format-patch', '-1', '--stdout', sha]);
+  }
+
+  /** Writes one numbered patch file per commit into `dir` (given oldest first); returns the file names. */
+  async formatPatches(dir: string, shas: string[]): Promise<string[]> {
+    const files: string[] = [];
+    for (let i = 0; i < shas.length; i++) {
+      const out = await this.run(['format-patch', '-1', `--start-number=${i + 1}`, `--subject-prefix=PATCH ${i + 1}/${shas.length}`, '-o', dir, shas[i]]);
+      files.push(...out.split('\n').map(l => l.trim()).filter(Boolean));
+    }
+    return files;
+  }
+
+  /** True when a remote-tracking branch contains `ref`, i.e. the commit exists on a remote (as far as last fetched). */
+  async onRemote(ref = 'HEAD'): Promise<boolean> {
+    return (await this.tryRun(['branch', '-r', '--contains', ref])).trim().length > 0;
   }
 }
 
