@@ -8,6 +8,7 @@ import { layout } from './graph';
 import { readBisect } from './bisect';
 import { Bump, classifyCommits, compareVersions, latestVersion, nextVersion, parseVersionTag, renderChangelog, suggestBump } from './release';
 import { LogFilter, keepsGraph, normalizeFilter } from './logFilter';
+import { HunkSelectionError, buildPatch } from './hunks';
 import { Integrations, IntegrationState } from './integration';
 import { ProviderId } from './providers/types';
 import { buildCommitPrompt, cleanModelOutput } from './commitPrompt';
@@ -2008,6 +2009,42 @@ export class RepoPanel {
     ];
     const picks = await vscode.window.showQuickPick(items, { canPickMany: true, placeHolder: 'Show only the history of these branches' });
     if (picks) this.post({ type: 'filterRefs', refs: picks.map(p => p.label) });
+  }
+
+  // ---- hunk and line staging
+
+  async on_fileHunks(m: Msg) {
+    const file = await this.git().fileHunks(String(m.path), !!m.staged);
+    this.post({ type: 'hunks', path: m.path, staged: !!m.staged, file });
+  }
+
+  /** m: path, staged, hunk, lines? (indices into the hunk), sig? (hunk ranges the webview saw), action: stage | unstage | discard. */
+  async on_applyHunks(m: Msg) {
+    const action = String(m.action);
+    const staged = !!m.staged;
+    if (!['stage', 'unstage', 'discard'].includes(action) || (action === 'unstage') !== staged) return;
+    const partial = Array.isArray(m.lines);
+    if (action === 'discard') {
+      const ok = await this.confirm(`Discard ${partial ? 'the selected lines' : 'this hunk'} in ${m.path}?`, 'Unstaged changes are lost permanently.', 'Discard');
+      if (!ok) return;
+    }
+    const label = { stage: 'Stage', unstage: 'Unstage', discard: 'Discard' }[action] + (partial ? ' lines' : ' hunk');
+    const cli = this.git();
+    let stale = false;
+    await this.runOp(label, async () => {
+      // Always re-read the diff: the webview's copy may be outdated.
+      const file = await cli.fileHunks(String(m.path), staged);
+      let patch: string;
+      try {
+        patch = buildPatch(file, { hunk: Number(m.hunk), lines: partial ? m.lines.map(Number) : undefined, sig: typeof m.sig === 'string' ? m.sig : undefined }, { reverse: action !== 'stage', path: String(m.path) });
+      } catch (e) {
+        if (!(e instanceof HunkSelectionError)) throw e;
+        stale = true;
+        return;
+      }
+      await cli.applyPatch(patch, { cached: action !== 'discard', reverse: action !== 'stage' });
+    });
+    if (stale) vscode.window.showWarningMessage(`gitSt8: ${m.path} changed since the diff was shown. Nothing was applied; review the refreshed diff and try again.`);
   }
 
   // ---------------------------------------------------------------- html

@@ -105,6 +105,8 @@ Prefer an editor tab? Set `"gitst8.location": "editor"`. You can also drag the p
 3. Click a staged file to diff HEAD ↔ index, or an unstaged file to diff index ↔ working tree.
 4. Type a message and press `Ctrl+Enter` (`Cmd+Enter` on macOS) or click the button.
 
+**Stage parts of a file.** Click the chevron at the left of a file in *Staged changes* or *Changes* to expand its diff inline. Each hunk has its own buttons: **Stage hunk** / **Discard hunk** for unstaged files, **Unstage hunk** for staged ones. To work on single lines, click changed (`+` / `-`) lines to select them, or Shift+click to select a range within one hunk; then use **Stage selected lines**, **Unstage selected lines** or **Discard selected lines**. Unselected removed lines stay as they are and unselected added lines are left out, the same as edit mode in `add -p`. Discarding asks first. The diff is read again right before applying, so if the file changed in the meantime gitSt8 shows a warning instead of applying anything. Expanded files stay open across refreshes. Untracked, conflicted and binary files can only be staged as a whole, and a file's mode change always goes with the whole file.
+
 Right-click a changed file to ignore it:
 
 | Menu entry | Adds to | Pattern |

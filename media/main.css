@@ -651,3 +651,22 @@ table.reflog .btns { text-align: right; }
 .badge.bis-bad { border-color: var(--vscode-errorForeground); color: var(--vscode-errorForeground); }
 .badge.bis-skip { border-color: var(--muted); color: var(--muted); border-style: dashed; }
 .badge.bis-cur { border-color: var(--c-tag); color: var(--c-tag); font-weight: 700; }
+
+/* hunk and line staging: inline diff under a file row */
+.files .hchev { width: 18px; flex: none; display: inline-flex; justify-content: center; }
+.files li.hunkview { display: block; cursor: default; min-height: 0; padding: 2px 4px 6px 26px; }
+.files li.hunkview:hover { background: none; }
+.hunk { border: 1px solid var(--border); border-radius: 3px; margin: 4px 0; overflow: hidden; }
+.hunk-head { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 2px 6px; background: color-mix(in srgb, var(--vscode-foreground) 6%, transparent); }
+.hunk-head .hh { font-family: var(--vscode-editor-font-family); color: var(--muted); white-space: pre; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.hunk-head button { display: inline-flex; align-items: center; gap: 3px; }
+.hunk-body { overflow-x: auto; font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size, 12px); }
+.dl { display: flex; white-space: pre; min-width: max-content; line-height: 1.5; }
+.dl .ln { width: 4ch; flex: none; text-align: right; padding-right: 6px; color: var(--muted); user-select: none; }
+.dl .sg { width: 2ch; flex: none; text-align: center; user-select: none; }
+.dl .tx { flex: 1; padding-right: 8px; }
+.dl .eol { margin-left: 8px; color: var(--muted); font-style: italic; font-size: 0.9em; user-select: none; }
+.dla { background: var(--vscode-diffEditor-insertedTextBackground, rgba(46, 160, 67, 0.2)); cursor: pointer; }
+.dld { background: var(--vscode-diffEditor-removedTextBackground, rgba(248, 81, 73, 0.2)); cursor: pointer; }
+.dla:hover, .dld:hover { filter: brightness(1.2); }
+.dl.sel { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; box-shadow: inset 4px 0 0 var(--vscode-focusBorder); }
