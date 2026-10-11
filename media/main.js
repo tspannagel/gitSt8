@@ -217,6 +217,21 @@
         : `${ic('debug-disconnect', 'sm')}detached @ ${esc(short(d.head.sha) || '—')}`
       : '';
     head.title = d.head?.branch ? `Current branch: ${d.head.branch}` : 'HEAD is detached';
+    // Commits waiting to be pulled / pushed for the current branch (behind/ahead of its upstream, as of the last fetch).
+    const b = d.head?.branch ? (d.refs?.local || []).find(x => x.name === d.head.branch) : null;
+    const up = b?.upstream && !b.gone ? b.upstream : null;
+    setCount('pull', up ? b.behind : 0, n => `${n} commit(s) to pull from ${up} (as of the last fetch)`);
+    setCount('push', up ? b.ahead : 0, n => `${n} commit(s) to push to ${up}`);
+  }
+
+  function setCount(cmd, n, hint) {
+    const btn = $(`#toolbar [data-cmd="${cmd}"]`);
+    const el = $(`#${cmd}Count`);
+    if (!btn || !el) return;
+    if (btn.dataset.title === undefined) btn.dataset.title = btn.title;
+    el.hidden = !n;
+    el.textContent = n ? String(n) : '';
+    btn.title = n ? `${hint(n)}\n${btn.dataset.title}` : btn.dataset.title;
   }
 
   const FILTER_FLAGS = ['mine', 'noMerges', 'firstParent'];
@@ -1304,6 +1319,8 @@
         { label: 'Pull --rebase --autostash', icon: 'repo-pull', run: () => post('pull', { mode: 'autostash' }) },
         { label: 'Pull --ff-only', icon: 'repo-pull', run: () => post('pull', { mode: 'ff' }) },
         { label: 'Pull --no-rebase (merge)', icon: 'repo-pull', run: () => post('pull', { mode: 'merge' }) },
+        '-',
+        { label: 'Pull --force (reset to upstream)…', icon: 'warning', run: () => post('pull', { mode: 'force' }) },
       ];
     }
     if (cmd === 'push') {

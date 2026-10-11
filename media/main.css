@@ -217,6 +217,17 @@ button.tb {
 }
 button.tb:hover { background: var(--vscode-toolbar-hoverBackground); }
 button.tb.primary-tb .ci { color: var(--c-branch); }
+.tbcount {
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+}
+.tbcount[hidden] { display: none; }
 
 .search {
   display: inline-flex;

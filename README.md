@@ -1,3 +1,5 @@
+<img src="media/logo.png" alt="gitSt8 logo" width="128" align="right">
+
 # gitSt8
 
 **One view for the git workflows the built-in Source Control view makes awkward.**
@@ -65,7 +67,7 @@ Prefer an editor tab? Set `"gitst8.location": "editor"`. You can also drag the p
    sidebar                    commit graph                        details pane
 ```
 
-**Toolbar.** The repository picker comes first (see [multiple repositories](#multiple-repositories)), then the current branch (shown in red when HEAD is detached). Next come the main actions, the **All branches** toggle, **Filter** (see [search history](#search-history)), search, and refresh. When space is tight, buttons shrink to icons; hover to see what they do.
+**Toolbar.** The repository picker comes first (see [multiple repositories](#multiple-repositories)), then the current branch (shown in red when HEAD is detached). Next come the main actions, the **All branches** toggle, **Filter** (see [search history](#search-history)), search, and refresh. **Pull** and **Push** show a count badge when the current branch is behind or ahead of its upstream: commits to pull (as of the last fetch) and commits to push. When space is tight, buttons shrink to icons; hover to see what they do.
 
 **Sidebar.** Collapsible sections with a color per kind of ref. Click an entry to jump to its commit in the graph, double-click to check it out (or to open a worktree), and right-click for everything else. Each section header has a **⋯** menu with section-wide actions. The filter box at the top filters every section by name.
 
@@ -135,7 +137,7 @@ Commits go through VS Code's Git extension, so commit signing and `git.*` settin
 | Button | What it does |
 | --- | --- |
 | **Fetch** | `git fetch --all --prune`: updates every remote and removes remote branches that were deleted on the server |
-| **Pull** | Asks how: repository default, `--rebase`, `--rebase --autostash`, `--ff-only`, or merge |
+| **Pull** | Asks how: repository default, `--rebase`, `--rebase --autostash`, `--ff-only`, merge, or **force** (fetch, then `reset --hard` to the upstream; asks first and lists the local commits and uncommitted changes it discards, untracked files are kept) |
 | **Push** | Asks what to push: the current branch only, the branch with `--follow-tags` (annotated tags on the pushed commits), the branch plus all tags, all tags only, or one of three force pushes (see below). Without an upstream, you pick a remote and the upstream is set. Tag pushes and force pushes use the git CLI |
 
 **Right-click a toolbar button** to pick a variant directly instead of going through the quick pick:
@@ -143,7 +145,7 @@ Commits go through VS Code's Git extension, so commit signing and `git.*` settin
 | Button | Right-click menu |
 | --- | --- |
 | **Fetch** | Fetch all & prune · Fetch all without pruning · Fetch one remote & prune (with several remotes) |
-| **Pull** | Default · `--rebase` · `--rebase --autostash` · `--ff-only` · `--no-rebase` (merge) |
+| **Pull** | Default · `--rebase` · `--rebase --autostash` · `--ff-only` · `--no-rebase` (merge) · `--force` (reset to upstream) |
 | **Push** | Push · `--follow-tags` · and all tags · the three force pushes · Push all tags |
 | **Branch** | Create and checkout · Create only · Create in a new worktree |
 | **Stash** | Tracked changes · including untracked · staged only · `--keep-index` |

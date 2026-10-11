@@ -61,6 +61,7 @@ const PULL_MODES: PickItem[] = [
   { label: 'Pull --rebase --autostash', description: 'same, stashing local changes around it', id: 'autostash', args: ['--rebase', '--autostash'] },
   { label: 'Pull --ff-only', description: 'only fast-forward, never merge or rebase', id: 'ff', args: ['--ff-only'] },
   { label: 'Pull --no-rebase', description: 'merge upstream into your branch', id: 'merge', args: ['--no-rebase', '--no-edit'] },
+  { label: 'Pull --force', description: 'fetch, then reset --hard to upstream: discards local commits and changes', id: 'force' },
 ];
 
 /**
@@ -792,8 +793,32 @@ export class RepoPanel {
     const pick = PULL_MODES.find(p => p.id === m.mode) || (await vscode.window.showQuickPick<PickItem>(PULL_MODES, { placeHolder: `Pull ${b.upstream} into ${b.name}` }));
     if (!pick) return;
     if (pick.id === 'default') return this.runOp('Pull', () => this.requireRepo().pull(), true);
+    if (pick.id === 'force') return this.forcePull(b.name, b.upstream);
     const args = pick.args || [];
     await this.runOp(`Pull ${args.join(' ')}`, () => this.git().run(['pull', ...args], { env: { GIT_EDITOR: ':' } }), true);
+  }
+
+  /**
+   * "Force pull": makes the current branch match its upstream (fetch + reset --hard). Plain `git pull --force` only
+   * forces remote-tracking ref updates, so it would not do what people mean. Untracked files are left alone.
+   */
+  async forcePull(name: string, upstream: string) {
+    const split = this.splitUpstream(upstream);
+    if (!(await this.runOp(`Fetch ${split?.remote || 'all'}`, () => this.requireRepo().fetch(split ? { remote: split.remote } : { all: true })))) return;
+    const git = this.git();
+    const { onlyLeft: lose } = await git.aheadBehind('HEAD', upstream);
+    const dirty = (await git.status()).filter(f => f.x !== '?' && f.x !== '!').length;
+    const what = [
+      lose ? `${lose} local commit(s) not on ${upstream} (still reachable through the reflog)` : '',
+      dirty ? `uncommitted changes in ${dirty} tracked file(s) (not recoverable)` : '',
+    ].filter(Boolean);
+    const ok = await this.confirm(
+      `Reset '${name}' to ${upstream}?`,
+      what.length ? `This discards:\n• ${what.join('\n• ')}\n\nUntracked files are kept.` : `Nothing local is lost. Untracked files are kept.`,
+      'Reset to Upstream',
+    );
+    if (ok !== 'Reset to Upstream') return;
+    await this.runOp(`Pull --force (reset to ${upstream})`, () => git.run(['reset', '--hard', upstream]), true);
   }
 
   /** m.mode (from the toolbar right-click menu) skips the quick pick: branch, follow, all, tags, safe, lease or force. */
@@ -2076,8 +2101,8 @@ ${font ? `<style nonce="${nonce}">@font-face { font-family: "codicon"; font-disp
   <span class="tgroup">
     <button class="tb primary-tb" data-cmd="openCommit" title="Staged/unstaged changes and commit"><i class="ci" data-icon="check"></i><span class="lbl">Commit</span></button>
     <button class="tb" data-cmd="fetch" title="Fetch all remotes and prune deleted branches (right-click: more options)"><i class="ci" data-icon="sync"></i><span class="lbl">Fetch</span></button>
-    <button class="tb" data-cmd="pull" title="Pull current branch: rebase / ff-only / merge (right-click: pick directly)"><i class="ci" data-icon="repo-pull"></i><span class="lbl">Pull</span></button>
-    <button class="tb" data-cmd="push" title="Push current branch, with tags or force push (right-click: pick directly)"><i class="ci" data-icon="repo-push"></i><span class="lbl">Push</span></button>
+    <button class="tb" data-cmd="pull" title="Pull current branch: rebase / ff-only / merge (right-click: pick directly)"><i class="ci" data-icon="repo-pull"></i><span class="lbl">Pull</span><span class="tbcount" id="pullCount" hidden></span></button>
+    <button class="tb" data-cmd="push" title="Push current branch, with tags or force push (right-click: pick directly)"><i class="ci" data-icon="repo-push"></i><span class="lbl">Push</span><span class="tbcount" id="pushCount" hidden></span></button>
   </span>
   <span class="tgroup">
     <button class="tb" data-cmd="createBranch" title="New branch from HEAD (right-click: checkout / create only / worktree)"><i class="ci" data-icon="git-branch"></i><span class="lbl">Branch</span></button>
