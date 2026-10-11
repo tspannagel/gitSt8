@@ -1,10 +1,11 @@
 {
   "name": "gitst8",
   "displayName": "gitSt8",
-  "description": "One view for advanced git workflows: graph history, search, fetch/prune, branch, merge, rebase (incl. interactive), stacks, worktrees, tags, reflog undo, compare and diff.",
+  "description": "One view for advanced git workflows: graph history, search, fetch/prune, branch, merge, rebase (incl. interactive), stacks, worktrees, tags, reflog undo, compare and diff, hunk staging, bisect, submodules, patches, release changelogs, and PR creation.",
   "version": "0.3.0",
   "publisher": "tisp",
   "license": "MIT",
+  "icon": "media/logo.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/tspannagel/gitSt8.git"
@@ -73,6 +74,16 @@
         "category": "gitSt8"
       },
       {
+        "command": "gitst8.copyPermalink",
+        "title": "Copy Permalink to Line(s)",
+        "category": "gitSt8"
+      },
+      {
+        "command": "gitst8.applyPatch",
+        "title": "Apply Patch…",
+        "category": "gitSt8"
+      },
+      {
         "command": "gitst8.signInGitHub",
         "title": "Sign in to GitHub",
         "category": "gitSt8"
@@ -122,6 +133,11 @@
           "command": "gitst8.fileHistory",
           "group": "gitst8@2",
           "when": "resourceScheme == file"
+        },
+        {
+          "command": "gitst8.copyPermalink",
+          "group": "gitst8@3",
+          "when": "resourceScheme == file"
         }
       ],
       "editor/title/context": [
@@ -146,6 +162,10 @@
       "commandPalette": [
         {
           "command": "gitst8.revealLineCommit",
+          "when": "editorIsOpen"
+        },
+        {
+          "command": "gitst8.copyPermalink",
           "when": "editorIsOpen"
         },
         {
@@ -193,6 +213,16 @@
           "default": 60,
           "minimum": 1,
           "description": "Local branches without commits for this many days are marked stale and offered in Clean up."
+        },
+        "gitst8.ai.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the button that drafts a commit message with a language model (e.g. Copilot). The diff is sent to the model provider only when you click it."
+        },
+        "gitst8.ai.modelFamily": {
+          "type": "string",
+          "default": "",
+          "description": "Language model family used to draft commit messages (for example gpt-4o). Empty uses the first available model, preferring Copilot."
         },
         "gitst8.integrations.enabled": {
           "type": "boolean",

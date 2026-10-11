@@ -2,10 +2,18 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as crypto from 'crypto';
+import { Submodule } from './submodules';
 import { Commit, FileChange, GitCli, Head, LocalBranch, OpState, Query, QueryKind, Refs, StackEntry, StatusEntry, Worktree, EMPTY_TREE, appendIgnore, ignorePattern, splitRemoteRef } from './git';
 import { layout } from './graph';
+import { readBisect } from './bisect';
+import { Bump, classifyCommits, compareVersions, latestVersion, nextVersion, parseVersionTag, renderChangelog, suggestBump } from './release';
+import { LogFilter, keepsGraph, normalizeFilter } from './logFilter';
+import { HunkSelectionError, buildPatch } from './hunks';
 import { Integrations, IntegrationState } from './integration';
 import { ProviderId } from './providers/types';
+import { buildCommitPrompt, cleanModelOutput } from './commitPrompt';
+import { branchUrl, commitUrl, createPrUrl, fileUrl, providerName } from './providers/links';
+import { defaultBody, defaultTitle, prHeadRefspec } from './prdraft';
 import type { API, Repository } from './types/git';
 
 const PAGE = 400;
@@ -18,7 +26,7 @@ const REBASE_ACTIONS = new Set(['pick', 'reword', 'edit', 'squash', 'fixup', 'dr
  * Message fields that end up as git arguments. They must never look like an option (e.g. `--upload-pack=…`),
  * so a webview bug cannot turn into arbitrary git options. File paths are always passed after `--` instead.
  */
-const ARG_FIELDS = ['sha', 'shas', 'ref', 'onto', 'name', 'remote', 'branch', 'newBranch', 'a', 'b', 'left', 'right', 'from', 'base', 'hash', 'parents'];
+const ARG_FIELDS = ['sha', 'shas', 'ref', 'onto', 'name', 'remote', 'branch', 'newBranch', 'a', 'b', 'left', 'right', 'from', 'base', 'hash', 'parents', 'bad', 'good', 'to'];
 const looksLikeOption = (v: unknown) => (Array.isArray(v) ? v : [v]).some(x => typeof x === 'string' && x.startsWith('-'));
 const short = (s: string | null | undefined) => (s && /^[0-9a-f]{40}$/.test(s) ? s.slice(0, 7) : s || '');
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -53,6 +61,7 @@ const PULL_MODES: PickItem[] = [
   { label: 'Pull --rebase --autostash', description: 'same, stashing local changes around it', id: 'autostash', args: ['--rebase', '--autostash'] },
   { label: 'Pull --ff-only', description: 'only fast-forward, never merge or rebase', id: 'ff', args: ['--ff-only'] },
   { label: 'Pull --no-rebase', description: 'merge upstream into your branch', id: 'merge', args: ['--no-rebase', '--no-edit'] },
+  { label: 'Pull --force', description: 'fetch, then reset --hard to upstream: discards local commits and changes', id: 'force' },
 ];
 
 /**
@@ -142,6 +151,7 @@ export class RepoPanel {
   private limit = PAGE;
   private showAll = true;
   private query: Query | null = null;
+  private filter: LogFilter | null = null;
   private tagSync: { remote: string; tags: Record<string, string> } | null = null;
   private splitting: { sha: string; subject: string } | null = null;
   private readonly disposables: vscode.Disposable[] = [];
@@ -161,6 +171,7 @@ export class RepoPanel {
   private lastBase: string | null = null;
   private lastCommits?: Commit[];
   private lastWorktrees?: Worktree[];
+  private lastSubmodules?: Submodule[];
   private lastStack?: StackEntry[];
   private lastIntegration: IntegrationState | null = null;
   private integrationSeq = 0;
@@ -296,6 +307,7 @@ export class RepoPanel {
     this.root = root;
     this.limit = PAGE;
     this.query = null;
+    this.filter = null;
     this.tagSync = null;
     this.splitting = null;
     this.lastIntegration = null;
@@ -378,7 +390,7 @@ export class RepoPanel {
     const git = this.git();
     const base = await git.defaultBase(config().get<string>('stackBase'));
     const [log, refs, stashes, status, op, head, worktrees, stack] = await Promise.all([
-      git.log({ limit: this.limit, all: this.showAll, query: this.query }),
+      git.log({ limit: this.limit, all: this.showAll, query: this.query, filter: this.filter }),
       git.refs(),
       git.stashes(),
       git.status(),
@@ -388,6 +400,7 @@ export class RepoPanel {
       base ? git.stack(base) : Promise.resolve([] as StackEntry[]),
     ]);
     if (!op) this.splitting = null;
+    const bisect = await readBisect(git);
     // Remove rebase scratch files once no rebase uses them. Checked synchronously right before deleting,
     // because a rebase may have started (or stopped) while the queries above ran.
     const gitDir = await git.gitDir().catch(() => null);
@@ -398,10 +411,10 @@ export class RepoPanel {
     const wip = await this.wipDetails(status, head);
 
     const commits = log.commits;
-    if (this.query) {
+    if (this.query || !keepsGraph(this.filter)) {
       // Search results are not a connected history: draw them as one line.
       commits.forEach((c, i) => (c.graphParents = commits[i + 1] ? [commits[i + 1].hash] : []));
-    } else if (status.length) {
+    } else if (status.length && !this.filter?.refs?.length) {
       const staged = status.filter(f => f.x !== ' ' && f.x !== '?').length;
       const unstaged = status.filter(f => f.y !== ' ').length;
       commits.unshift({
@@ -413,6 +426,9 @@ export class RepoPanel {
         wip: true,
       });
     }
+    // Both are skipped cheaply unless the repo has .gitmodules / LFS attributes.
+    const [submodules, lfs] = await Promise.all([git.submodules().catch(() => []), git.lfsSummary(head.sha).catch(() => null)]);
+    this.lastSubmodules = submodules;
     const g = layout(commits);
     this.lastHead = head;
     this.lastRefs = refs;
@@ -432,11 +448,15 @@ export class RepoPanel {
         refs,
         stashes,
         op: op && { ...op, splitting: this.splitting },
+        bisect,
         hasMore: log.hasMore,
         showAll: this.showAll,
         query: this.query,
+        filter: this.filter,
         tagSync: this.tagSync,
         worktrees,
+        submodules,
+        lfs,
         stack,
         base,
         staleDays: config().get('staleBranchDays', 60),
@@ -528,9 +548,10 @@ export class RepoPanel {
     const git = this.git();
     if (sha && !this.lastCommits?.some(c => c.hash === sha)) {
       this.query = null;
+      this.filter = null;
       let limit = this.limit;
       for (;;) {
-        const { commits, hasMore } = await git.log({ limit, all: this.showAll, query: null });
+        const { commits, hasMore } = await git.log({ limit, all: this.showAll, query: null, filter: null });
         if (commits.some(c => c.hash === sha) || !hasMore || limit >= REVEAL_LIMIT) break;
         limit *= 2;
       }
@@ -568,6 +589,7 @@ export class RepoPanel {
 
   on_ready() {
     this.resolveReady();
+    this.on_aiCheck();
     this.scheduleRefresh(0);
   }
   on_refresh() {
@@ -771,8 +793,32 @@ export class RepoPanel {
     const pick = PULL_MODES.find(p => p.id === m.mode) || (await vscode.window.showQuickPick<PickItem>(PULL_MODES, { placeHolder: `Pull ${b.upstream} into ${b.name}` }));
     if (!pick) return;
     if (pick.id === 'default') return this.runOp('Pull', () => this.requireRepo().pull(), true);
+    if (pick.id === 'force') return this.forcePull(b.name, b.upstream);
     const args = pick.args || [];
     await this.runOp(`Pull ${args.join(' ')}`, () => this.git().run(['pull', ...args], { env: { GIT_EDITOR: ':' } }), true);
+  }
+
+  /**
+   * "Force pull": makes the current branch match its upstream (fetch + reset --hard). Plain `git pull --force` only
+   * forces remote-tracking ref updates, so it would not do what people mean. Untracked files are left alone.
+   */
+  async forcePull(name: string, upstream: string) {
+    const split = this.splitUpstream(upstream);
+    if (!(await this.runOp(`Fetch ${split?.remote || 'all'}`, () => this.requireRepo().fetch(split ? { remote: split.remote } : { all: true })))) return;
+    const git = this.git();
+    const { onlyLeft: lose } = await git.aheadBehind('HEAD', upstream);
+    const dirty = (await git.status()).filter(f => f.x !== '?' && f.x !== '!').length;
+    const what = [
+      lose ? `${lose} local commit(s) not on ${upstream} (still reachable through the reflog)` : '',
+      dirty ? `uncommitted changes in ${dirty} tracked file(s) (not recoverable)` : '',
+    ].filter(Boolean);
+    const ok = await this.confirm(
+      `Reset '${name}' to ${upstream}?`,
+      what.length ? `This discards:\n• ${what.join('\n• ')}\n\nUntracked files are kept.` : `Nothing local is lost. Untracked files are kept.`,
+      'Reset to Upstream',
+    );
+    if (ok !== 'Reset to Upstream') return;
+    await this.runOp(`Pull --force (reset to ${upstream})`, () => git.run(['reset', '--hard', upstream]), true);
   }
 
   /** m.mode (from the toolbar right-click menu) skips the quick pick: branch, follow, all, tags, safe, lease or force. */
@@ -1265,6 +1311,7 @@ export class RepoPanel {
       merge: ['commit', '--no-edit'],
       'cherry-pick': ['cherry-pick', '--continue'],
       revert: ['revert', '--continue'],
+      am: ['am', '--continue'],
     }[op.kind];
     await this.runOp(`Continue ${op.kind}`, () => git.run(cmd, { env }));
   }
@@ -1535,6 +1582,496 @@ export class RepoPanel {
     if (name) await this.runOp(`Branch from ${m.ref}`, () => this.git().run(['stash', 'branch', name, m.ref]));
   }
 
+  // ---- bisect
+
+  /** Starts a bisect between a known bad and a known good commit; git checks out the first candidate. */
+  async on_bisectStart(m: Msg) {
+    if (!(await this.requireCleanTree('Bisecting'))) return;
+    const bad = m.bad || 'HEAD';
+    let good: string | undefined = m.good;
+    if (!good) {
+      good = (await vscode.window.showInputBox({ prompt: `Last known good commit, branch or tag (${short(bad)} is bad)`, validateInput: v => (v.trim().startsWith('-') ? 'Enter a commit, branch or tag' : undefined) }))?.trim();
+      if (!good) return;
+    }
+    const g = good;
+    await this.runOp('Start bisect', () => this.git().run(['bisect', 'start', bad, g, '--']));
+  }
+
+  /** Marks `sha` (default: the checked out candidate) as good, bad or skipped. */
+  async on_bisectMark(m: Msg) {
+    if (!['good', 'bad', 'skip'].includes(m.verdict)) return;
+    const args = ['bisect', m.verdict];
+    if (m.sha) args.push(m.sha);
+    await this.runOp(`Bisect: mark ${m.verdict}`, () => this.git().run(args));
+  }
+
+  /** Ends the bisect and returns to the branch it started from. */
+  async on_bisectReset() {
+    await this.runOp('Reset bisect', () => this.git().run(['bisect', 'reset']));
+  }
+
+  // ---- generate commit message
+
+  private aiCts?: vscode.CancellationTokenSource;
+  private aiAvailable?: boolean; // cached; null/undefined = not checked yet
+  private aiWatching = false;
+
+  /** Picks a chat model: gitst8.ai.modelFamily if set, else the first one (Copilot preferred). */
+  private async pickModel(): Promise<vscode.LanguageModelChat | undefined> {
+    const family = (vscode.workspace.getConfiguration('gitst8').get<string>('ai.modelFamily') || '').trim();
+    const sel = (s: vscode.LanguageModelChatSelector) => vscode.lm.selectChatModels(s);
+    const base = family ? { family } : {};
+    return (await sel({ vendor: 'copilot', ...base }))[0] ?? (await sel(base))[0];
+  }
+
+  /** Tells the webview whether the sparkle button should show. Checked lazily, cached, re-checked when models change. */
+  private async postAiAvailability(recheck = false): Promise<void> {
+    if (!this.aiWatching) {
+      this.aiWatching = true;
+      this.disposables.push(
+        vscode.lm.onDidChangeChatModels(() => this.postAiAvailability(true)),
+        vscode.workspace.onDidChangeConfiguration(e => e.affectsConfiguration('gitst8.ai') && this.postAiAvailability(true))
+      );
+    }
+    const enabled = vscode.workspace.getConfiguration('gitst8').get<boolean>('ai.enabled', true);
+    if (!enabled) this.aiAvailable = false;
+    else if (recheck || this.aiAvailable === undefined) this.aiAvailable = (await vscode.lm.selectChatModels()).length > 0;
+    this.post({ type: 'aiAvailable', available: !!this.aiAvailable });
+  }
+
+  async on_aiCheck() {
+    await this.postAiAvailability().catch(() => this.post({ type: 'aiAvailable', available: false }));
+  }
+
+  async on_cancelCommitMessage() {
+    this.aiCts?.cancel();
+  }
+
+  async on_generateCommitMessage() {
+    this.aiCts?.cancel();
+    const cts = (this.aiCts = new vscode.CancellationTokenSource());
+    const fail = (text: string) => this.post({ type: 'commitMsgError', text });
+    try {
+      const git = this.git();
+      const flags = ['--no-color', '--no-ext-diff'];
+      // Same rule as the commit button: staged changes, else all tracked changes (it stages everything).
+      let args = ['diff', '--cached', ...flags];
+      let diff = await git.run(args);
+      if (!diff.trim()) {
+        args = ['diff', ...flags];
+        diff = await git.run(args);
+      }
+      if (!diff.trim()) return fail('No changes to describe. Stage or modify tracked files first.');
+      const stat = await git.tryRun([...args, '--stat']);
+      const subjects = (await git.tryRun(['log', '-15', '--format=%s'])).split('\n').filter(Boolean);
+      const branch = (await git.tryRun(['rev-parse', '--abbrev-ref', 'HEAD'])).trim();
+      const model = await this.pickModel();
+      if (!model) return fail('No language model is available. Install a language model provider such as GitHub Copilot, sign in, and try again.');
+      const prompt = buildCommitPrompt({ diff, stat, recentSubjects: subjects, branch: branch === 'HEAD' ? '' : branch, maxChars: Math.max(2000, Math.min(60000, model.maxInputTokens * 3)) });
+      const res = await model.sendRequest([vscode.LanguageModelChatMessage.User(prompt)], { justification: 'gitSt8 drafts a commit message from your changes.' }, cts.token);
+      let text = '';
+      for await (const fragment of res.text) {
+        text += fragment;
+        this.post({ type: 'commitMsgChunk', text: fragment });
+      }
+      this.post({ type: 'commitMsgDone', text: cleanModelOutput(text) });
+    } catch (e) {
+      if (cts.token.isCancellationRequested) return this.post({ type: 'commitMsgDone', cancelled: true });
+      if (e instanceof vscode.LanguageModelError) {
+        const why: Record<string, string> = {
+          NoPermissions: 'Permission to use the language model was not granted. Click the button again and allow access.',
+          Blocked: 'The language model blocked this request.',
+          NotFound: 'The language model was not found. Check gitst8.ai.modelFamily.',
+        };
+        return fail(why[e.code] || `Language model error: ${e.message}`);
+      }
+      fail(errText(e));
+    } finally {
+      if (this.aiCts === cts) this.aiCts = undefined;
+      cts.dispose();
+    }
+  }
+
+  // ---- release tags and changelogs
+
+  /** Commits in `from..to` (empty `from` = whole history), classified as Conventional Commits. */
+  private async releaseCommits(from: string, to: string) {
+    return classifyCommits(await this.git().commitsInRange(from, to));
+  }
+
+  async on_releaseTag(m: Msg) {
+    const target = String(m.sha || 'HEAD');
+    const git = this.git();
+    const latest = latestVersion(await git.tagsMerged(target));
+    const commits = await this.releaseCommits(latest ? latest.name : '', target);
+    const bump = suggestBump(commits, latest?.major);
+    const items: PickItem[] = latest
+      ? (['patch', 'minor', 'major'] as Bump[]).map(b => ({ label: nextVersion(latest, b), description: b, id: nextVersion(latest, b), mode: b }))
+      : [{ label: 'v0.1.0', description: 'initial development', id: 'v0.1.0', mode: 'minor' }, { label: 'v1.0.0', description: 'first stable release', id: 'v1.0.0', mode: 'major' }];
+    const first = items.findIndex(it => it.mode === bump);
+    if (first > 0) items.unshift(...items.splice(first, 1));
+    if (latest) items[0].description = `${items[0].description} (suggested)`;
+    items.push({ label: '$(edit) Custom…', id: '' });
+    const since = latest ? `${commits.length} commit(s) since ${latest.name}` : `${commits.length} commit(s), no version tag yet`;
+    const pick = await vscode.window.showQuickPick<PickItem>(items, { placeHolder: `Release tag at ${target === 'HEAD' ? 'HEAD' : short(target)}: ${since}` });
+    if (!pick) return;
+    let name = pick.id || '';
+    if (!name) {
+      const entered = await vscode.window.showInputBox({ prompt: 'Release tag name', value: latest ? nextVersion(latest, bump) : 'v0.1.0', validateInput: v => (/^[^\s-]\S*$/.test(v) ? null : 'Enter a valid tag name') });
+      if (!entered) return;
+      name = entered;
+    }
+    const how = await vscode.window.showQuickPick<PickItem>(
+      [{ label: 'Use the generated changelog as tag message', id: 'changelog' }, { label: `Short message only (“Release ${name}”)`, id: 'short' }],
+      { placeHolder: `Annotation for ${name}` }
+    );
+    if (!how) return;
+    const message = how.id === 'changelog' ? renderChangelog({ version: name, date: new Date().toISOString().slice(0, 10), commits }) : `Release ${name}`;
+    const ok = await this.runOp(`Tag ${name}`, () => git.run(['tag', '-a', name, '-m', message, target]));
+    if (ok && this.lastRefs?.remotes.length) {
+      const push = await vscode.window.showInformationMessage(`Created tag ${name}.`, 'Push Tag');
+      if (push) await this.on_pushTag({ name });
+    }
+  }
+
+  /** Opens a changelog for `from..to` in an untitled Markdown document. `from`/`to` may come from a tag's menu. */
+  async on_changelog(m: Msg) {
+    const sorted = this.refs().tags.map(t => t.name).sort((a, b) => {
+      const va = parseVersionTag(a);
+      const vb = parseVersionTag(b);
+      return va && vb ? compareVersions(vb, va) : va ? -1 : vb ? 1 : a.localeCompare(b);
+    });
+    let from = m.from ? String(m.from) : '';
+    if (!from) {
+      const pick = await vscode.window.showQuickPick<PickItem>([...sorted.map(n => ({ label: n, id: n })), { label: '$(history) Whole history', id: '' }], { placeHolder: 'Changelog since which tag?' });
+      if (!pick) return;
+      from = pick.id || '';
+    }
+    let to = m.to ? String(m.to) : '';
+    if (!to) {
+      const pick = await vscode.window.showQuickPick<PickItem>(
+        [{ label: 'HEAD', description: 'unreleased changes', id: 'HEAD' }, ...sorted.filter(n => n !== from).map(n => ({ label: n, id: n }))],
+        { placeHolder: `Changelog ${from ? `${from}..` : 'up to '}…` }
+      );
+      if (!pick) return;
+      to = pick.id || 'HEAD';
+    }
+    const commits = await this.releaseCommits(from, to);
+    const content = renderChangelog({ version: to === 'HEAD' ? 'Unreleased' : to, date: new Date().toISOString().slice(0, 10), commits });
+    const doc = await vscode.workspace.openTextDocument({ language: 'markdown', content });
+    await vscode.window.showTextDocument(doc, { preview: false });
+  }
+
+  // ---- patches, copy helpers, links to the hosting service
+
+  /** Web links need no API access: only the detected remote URL. */
+  private hostRepo() {
+    const t = this.integrations.detect(this.refs().remoteInfo);
+    if (!t) vscode.window.showInformationMessage('gitSt8: no GitHub or Azure DevOps remote found.');
+    return t;
+  }
+
+  /** m.what: 'commit' | 'file' (needs m.path); m.action: 'open' | 'copy'. */
+  async on_hostLink(m: Msg) {
+    const t = this.hostRepo();
+    if (!t) return;
+    if (!/^[0-9a-f]{40}$/.test(String(m.sha))) return vscode.window.showWarningMessage('gitSt8: that item has no commit to link to.');
+    const url = m.what === 'file' ? fileUrl(t.repo, m.sha, String(m.path)) : commitUrl(t.repo, m.sha);
+    if (m.action === 'copy') {
+      await vscode.env.clipboard.writeText(url);
+      return vscode.window.setStatusBarMessage('gitSt8: link copied to clipboard', 2000);
+    }
+    await this.on_openExternal({ type: 'openExternal', url });
+  }
+
+  /** Opens the provider's "new pull request" page for a pushed branch, targeting the stack base. */
+  async on_createPrInBrowser(m: Msg) {
+    const t = this.hostRepo();
+    const b = this.localBranch(m.name);
+    if (!t || !b) return;
+    const up = b.upstream && !b.gone ? this.splitUpstream(b.upstream) : null;
+    if (!up || up.remote !== t.remote) return vscode.window.showWarningMessage(`gitSt8: '${b.name}' has no upstream on ${t.remote}. Push it first.`);
+    if (b.ahead > 0) {
+      const ok = await this.confirm(`'${b.name}' is ${b.ahead} commit(s) ahead of ${b.upstream}.`, 'The pull request only contains what is pushed.', 'Push First', 'Continue Without Pushing');
+      if (!ok) return;
+      if (ok === 'Push First') {
+        await this.pushBranch(b.name, false);
+        // The refs snapshot is stale until the refresh lands, so ask git; still ahead means the push failed or was cancelled.
+        if (Number((await this.git().tryRun(['rev-list', '--count', `${b.upstream}..${b.name}`], '1')).trim())) return;
+      }
+    }
+    let target = this.lastBase ? (this.lastBase.startsWith(`${t.remote}/`) ? this.lastBase.slice(t.remote.length + 1) : this.lastBase) : '';
+    if (!target) target = (await vscode.window.showInputBox({ prompt: 'Target branch of the pull request' })) || '';
+    if (!target) return;
+    if (target === up.branch) return vscode.window.showWarningMessage(`gitSt8: '${b.name}' is the target branch itself.`);
+    await this.on_openExternal({ type: 'openExternal', url: createPrUrl(t.repo, up.branch, target) });
+  }
+
+  /** Branch page on the hosting service. */
+  async on_openBranchOnHost(m: Msg) {
+    const t = this.hostRepo();
+    if (t) await this.on_openExternal({ type: 'openExternal', url: branchUrl(t.repo, String(m.branch)) });
+  }
+
+  async on_copyMessage(m: Msg) {
+    const msg = (await this.git().run(['show', '-s', '--format=%B', m.sha])).replace(/\s+$/, '');
+    await vscode.env.clipboard.writeText(msg);
+    vscode.window.setStatusBarMessage('gitSt8: message copied to clipboard', 2000);
+  }
+
+  private isMerge(sha: string) {
+    return ((this.lastCommits || []).find(c => c.hash === sha)?.parents.length ?? 0) > 1;
+  }
+
+  async on_copyPatch(m: Msg) {
+    if (this.isMerge(m.sha)) return vscode.window.showWarningMessage('gitSt8: patches of merge commits are not supported.');
+    await vscode.env.clipboard.writeText(await this.git().formatPatch(m.sha));
+    vscode.window.setStatusBarMessage('gitSt8: patch copied to clipboard', 2000);
+  }
+
+  async on_savePatch(m: Msg) {
+    if (this.isMerge(m.sha)) return vscode.window.showWarningMessage('gitSt8: patches of merge commits are not supported.');
+    const subject = (this.lastCommits || []).find(c => c.hash === m.sha)?.subject || short(m.sha);
+    const name = subject.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 50) || short(m.sha);
+    const uri = await vscode.window.showSaveDialog({
+      defaultUri: vscode.Uri.file(path.join(this.requireRoot(), `${name}.patch`)),
+      filters: { Patch: ['patch', 'diff'] },
+    });
+    if (!uri) return;
+    fs.writeFileSync(uri.fsPath, await this.git().formatPatch(m.sha));
+    vscode.window.setStatusBarMessage(`gitSt8: saved ${path.basename(uri.fsPath)}`, 3000);
+  }
+
+  /** m.shas arrive oldest first; merges are skipped. */
+  async on_savePatches(m: Msg) {
+    const shas = (m.shas as string[]).filter(s => !this.isMerge(s));
+    if (!shas.length) return vscode.window.showWarningMessage('gitSt8: no commits that can be turned into patches.');
+    const dir = await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, canSelectMany: false, defaultUri: vscode.Uri.file(this.requireRoot()), openLabel: 'Save Patches Here' });
+    if (!dir) return;
+    const files = await this.git().formatPatches(dir[0].fsPath, shas);
+    vscode.window.showInformationMessage(`gitSt8: saved ${files.length} patch file(s) to ${dir[0].fsPath}.`);
+  }
+
+  async on_applyPatch() {
+    const file = await vscode.window.showOpenDialog({ canSelectMany: false, filters: { Patches: ['patch', 'diff', 'mbox'], 'All files': ['*'] }, openLabel: 'Apply Patch' });
+    if (!file) return;
+    const pick = await vscode.window.showQuickPick(
+      [
+        { label: 'Apply as commits (git am --3way)', detail: 'Keeps author, date and message. Needs a patch made by format-patch.', args: ['am', '--3way'] },
+        { label: 'Apply to working tree (git apply --3way)', detail: 'Leaves the changes uncommitted (and staged where they merged cleanly).', args: ['apply', '--3way'] },
+        { label: 'Apply to index (git apply --cached)', detail: 'Stages the changes without touching the working tree.', args: ['apply', '--cached'] },
+      ],
+      { placeHolder: `Apply ${path.basename(file[0].fsPath)}` }
+    );
+    if (!pick) return;
+    await this.runOp(`Apply ${path.basename(file[0].fsPath)}`, () => this.git().run([...pick.args, '--', file[0].fsPath], { env: { GIT_EDITOR: ':' } }), true);
+  }
+
+  // ---- submodules and LFS
+
+  /** Submodule paths from the webview must be ones git listed; returns the absolute folder. */
+  requireSubmodule(p: string): { sub: Submodule; abs: string } {
+    const sub = this.lastSubmodules?.find(s => s.path === String(p));
+    if (!sub) throw new Error(`Unknown submodule: ${p}`);
+    return { sub, abs: path.join(this.requireRoot(), sub.path) };
+  }
+
+  /** Without m.path, applies to all submodules. */
+  on_submoduleUpdate(m: Msg) {
+    const sub = m.path ? this.requireSubmodule(m.path).sub : null;
+    return this.runOp(sub ? `Update submodule ${sub.path}` : 'Update all submodules', () => this.git().run(['submodule', 'update', '--init', '--recursive', ...(sub ? ['--', sub.path] : [])]), true);
+  }
+
+  on_submoduleSync(m: Msg) {
+    const sub = m.path ? this.requireSubmodule(m.path).sub : null;
+    return this.runOp(sub ? `Sync submodule ${sub.path}` : 'Sync all submodules', () => this.git().run(['submodule', 'sync', '--recursive', ...(sub ? ['--', sub.path] : [])]));
+  }
+
+  async on_openSubmodule(m: Msg) {
+    const { sub, abs } = this.requireSubmodule(m.path);
+    if (sub.state === 'uninitialized') throw new Error(`${sub.path} is not initialized yet. Use Initialize & update first.`);
+    const uri = vscode.Uri.file(abs);
+    const repo = this.api.getRepository(uri) || (await this.api.openRepository(uri));
+    if (!repo) throw new Error(`VS Code's git extension could not open ${sub.path}.`);
+    this.setRoot(repo.rootUri.fsPath);
+  }
+
+  async on_openSubmoduleWindow(m: Msg) {
+    await vscode.commands.executeCommand('vscode.openFolder', vscode.Uri.file(this.requireSubmodule(m.path).abs), { forceNewWindow: true });
+  }
+
+  async on_revealSubmodule(m: Msg) {
+    await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(this.requireSubmodule(m.path).abs));
+  }
+
+  async on_lfsPull() {
+    const git = this.git();
+    await this.runOp('Pull LFS files', () => git.run(['lfs', 'pull']), true);
+    git.lfsInvalidate(); // runOp's refresh is still queued, so it sees the change
+  }
+
+  async on_lfsFetch() {
+    const git = this.git();
+    await this.runOp('Fetch LFS files', () => git.run(['lfs', 'fetch']), true);
+    git.lfsInvalidate(); // runOp's refresh is still queued, so it sees the change
+  }
+
+  // ---- pull requests (create via API, check out)
+
+  /** Creates a pull request for a local branch. The only write to the hosting service; every step is explicit. */
+  async on_createPr(m: Msg) {
+    const name = String(m.name || '');
+    const b = this.localBranch(name);
+    const target = this.integrations.detect(this.refs().remoteInfo);
+    if (!b || !target) return vscode.window.showWarningMessage('No supported hosting service (GitHub / Azure DevOps) found for this repository.');
+    const { remote, repo } = target;
+    const existing = this.lastIntegration?.prs.find(p => p.sourceBranch === name && !p.fromFork);
+    if (existing) return vscode.window.showInformationMessage(`'${name}' already has pull request #${existing.number}.`);
+    const git = this.git();
+
+    // Push first when the branch is not on the integration remote yet, or is ahead of it.
+    const up = b.upstream && !b.gone ? this.splitUpstream(b.upstream) : null;
+    const onRemote = !!up && up.remote === remote;
+    const source = onRemote ? up!.branch : name;
+    if (!onRemote || b.ahead > 0) {
+      const why = !onRemote ? `'${name}' is not on ${remote} yet.` : `'${name}' is ${b.ahead} commit(s) ahead of ${b.upstream}.`;
+      const ok = await this.confirm(`Push '${name}' to ${remote} first?`, `${why} A pull request only contains what is on the server.`, 'Push');
+      if (!ok) return;
+      if (onRemote) await this.pushBranch(name, false);
+      else if (!(await this.runOp(`Push ${name}`, () => this.requireRepo().push(remote, `${name}:${source}`, !b.upstream), true))) return;
+    }
+
+    // Target branch: remote branches on the integration remote, default = the stack base.
+    const remoteBranches = this.refs().remote.filter(r => r.remote === remote && r.branch !== 'HEAD' && r.branch !== source);
+    if (!remoteBranches.length) return vscode.window.showWarningMessage(`No other branches found on ${remote}. Fetch first.`);
+    const base = (await git.defaultBase(config().get<string>('stackBase'))) || '';
+    const defaultTarget = base.startsWith(remote + '/') ? base.slice(remote.length + 1) : base;
+    const items: PickItem[] = remoteBranches.map(r => ({ label: r.branch, id: r.branch, description: r.branch === defaultTarget ? 'default' : '' }));
+    items.sort((a, c) => (c.description ? 1 : 0) - (a.description ? 1 : 0));
+    const tpick = await vscode.window.showQuickPick<PickItem>(items, { placeHolder: `Target branch for '${source}' on ${remote}` });
+    if (!tpick?.id) return;
+    const targetBranch = tpick.id;
+
+    const subjects = (await git.tryRun(['log', '--reverse', '--format=%s', `${remote}/${targetBranch}..${name}`, '--'])).split('\n').filter(Boolean);
+    const title = await vscode.window.showInputBox({
+      prompt: `Pull request title (${source} → ${targetBranch})`,
+      value: defaultTitle(name, subjects),
+      validateInput: v => (v.trim() ? null : 'A title is required'),
+    });
+    if (!title?.trim()) return;
+    const body = defaultBody(subjects);
+    const summary = `${title.trim()}  —  ${source} → ${targetBranch}, ${subjects.length} commit(s)`;
+    const fpick = await vscode.window.showQuickPick<PickItem>(
+      [{ label: '$(git-pull-request) Create', id: 'create' }, { label: '$(git-pull-request-draft) Create as draft', id: 'draft' }, { label: '$(close) Cancel', id: 'cancel' }],
+      { placeHolder: summary }
+    );
+    if (!fpick || fpick.id === 'cancel') return;
+
+    let pr;
+    try {
+      pr = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Creating pull request…' }, () =>
+        this.integrations.createPullRequest(repo, { source, target: targetBranch, title: title.trim(), body, draft: fpick.id === 'draft' })
+      );
+    } catch (e) {
+      return void vscode.window.showErrorMessage(`gitSt8: ${errText(e)}`);
+    }
+    const open = await vscode.window.showInformationMessage(`Created pull request #${pr.number}: ${pr.title}`, 'Open in Browser');
+    if (open) await vscode.env.openExternal(vscode.Uri.parse(pr.url));
+  }
+
+  /** Checks out the branch of an open pull request (same-repo: tracking branch; GitHub fork: pr/<n> from the pull ref). */
+  async on_checkoutPr(m: Msg) {
+    const n = Number(m.number);
+    const st = this.lastIntegration;
+    const pr = st?.prs.find(p => p.number === n);
+    if (!st || !pr) return vscode.window.showWarningMessage(`Pull request #${m.number} is not known (refresh and retry).`);
+    const git = this.git();
+    if (!pr.fromFork) {
+      const refspec = `+refs/heads/${pr.sourceBranch}:refs/remotes/${st.remote}/${pr.sourceBranch}`;
+      if (!(await this.runOp(`Fetch ${st.remote}/${pr.sourceBranch}`, () => git.run(['fetch', st.remote, refspec]), true))) return;
+      return this.on_checkout({ kind: 'remote', name: `${st.remote}/${pr.sourceBranch}`, branch: pr.sourceBranch });
+    }
+    const spec = prHeadRefspec(st.provider, n);
+    if (!spec) return void vscode.window.showInformationMessage(`#${n} comes from a fork. Azure DevOps does not expose fork pull request heads as branches; check it out from the fork's remote instead.`);
+    const local = `pr/${n}`;
+    if (this.localBranch(local)) {
+      const pick = await vscode.window.showQuickPick<PickItem>(
+        [
+          { label: `Checkout existing '${local}'`, id: 'local' },
+          { label: `Update '${local}' to the current PR head and check it out`, id: 'reset', description: 'discards local commits on that branch' },
+        ],
+        { placeHolder: `A local branch '${local}' already exists` }
+      );
+      if (!pick) return;
+      if (pick.id === 'local') return this.runOp(`Checkout ${local}`, () => git.run(['checkout', local]));
+      return this.runOp(`Checkout ${local}`, async () => {
+        await git.run(['fetch', st.remote, `pull/${n}/head`]);
+        await git.run(['checkout', '-B', local, 'FETCH_HEAD']);
+      }, true);
+    }
+    await this.runOp(`Checkout PR #${n}`, async () => {
+      await git.run(['fetch', st.remote, spec]);
+      await git.run(['checkout', local]);
+    }, true);
+  }
+
+  // ---- history filters
+
+  async on_setFilter(m: Msg) {
+    await this.ready;
+    this.filter = normalizeFilter(m.filter);
+    this.limit = PAGE;
+    await this.collect();
+    this.post({ type: 'queryApplied', path: this.query && (this.query.kind === 'path' || this.query.kind === 'any') ? this.query.value : null });
+  }
+  /** Multi-select of branches for the filter's "Branches…"; the answer goes back to the form. */
+  async on_pickFilterRefs(m: Msg) {
+    const refs = this.refs();
+    const chosen = new Set<string>(Array.isArray(m.current) ? m.current.map(String) : []);
+    const items = [
+      ...refs.local.map(b => ({ label: b.name, description: 'local', picked: chosen.has(b.name) })),
+      ...refs.remote.map(b => ({ label: b.name, description: 'remote', picked: chosen.has(b.name) })),
+    ];
+    const picks = await vscode.window.showQuickPick(items, { canPickMany: true, placeHolder: 'Show only the history of these branches' });
+    if (picks) this.post({ type: 'filterRefs', refs: picks.map(p => p.label) });
+  }
+
+  // ---- hunk and line staging
+
+  async on_fileHunks(m: Msg) {
+    const file = await this.git().fileHunks(String(m.path), !!m.staged);
+    this.post({ type: 'hunks', path: m.path, staged: !!m.staged, file });
+  }
+
+  /** m: path, staged, hunk, lines? (indices into the hunk), sig? (hunk ranges the webview saw), action: stage | unstage | discard. */
+  async on_applyHunks(m: Msg) {
+    const action = String(m.action);
+    const staged = !!m.staged;
+    if (!['stage', 'unstage', 'discard'].includes(action) || (action === 'unstage') !== staged) return;
+    const partial = Array.isArray(m.lines);
+    if (action === 'discard') {
+      const ok = await this.confirm(`Discard ${partial ? 'the selected lines' : 'this hunk'} in ${m.path}?`, 'Unstaged changes are lost permanently.', 'Discard');
+      if (!ok) return;
+    }
+    const label = { stage: 'Stage', unstage: 'Unstage', discard: 'Discard' }[action] + (partial ? ' lines' : ' hunk');
+    const cli = this.git();
+    let stale = false;
+    await this.runOp(label, async () => {
+      // Always re-read the diff: the webview's copy may be outdated.
+      const file = await cli.fileHunks(String(m.path), staged);
+      let patch: string;
+      try {
+        patch = buildPatch(file, { hunk: Number(m.hunk), lines: partial ? m.lines.map(Number) : undefined, sig: typeof m.sig === 'string' ? m.sig : undefined }, { reverse: action !== 'stage', path: String(m.path) });
+      } catch (e) {
+        if (!(e instanceof HunkSelectionError)) throw e;
+        stale = true;
+        return;
+      }
+      await cli.applyPatch(patch, { cached: action !== 'discard', reverse: action !== 'stage' });
+    });
+    if (stale) vscode.window.showWarningMessage(`gitSt8: ${m.path} changed since the diff was shown. Nothing was applied; review the refreshed diff and try again.`);
+  }
+
   // ---------------------------------------------------------------- html
 
   html() {
@@ -1564,8 +2101,8 @@ ${font ? `<style nonce="${nonce}">@font-face { font-family: "codicon"; font-disp
   <span class="tgroup">
     <button class="tb primary-tb" data-cmd="openCommit" title="Staged/unstaged changes and commit"><i class="ci" data-icon="check"></i><span class="lbl">Commit</span></button>
     <button class="tb" data-cmd="fetch" title="Fetch all remotes and prune deleted branches (right-click: more options)"><i class="ci" data-icon="sync"></i><span class="lbl">Fetch</span></button>
-    <button class="tb" data-cmd="pull" title="Pull current branch: rebase / ff-only / merge (right-click: pick directly)"><i class="ci" data-icon="repo-pull"></i><span class="lbl">Pull</span></button>
-    <button class="tb" data-cmd="push" title="Push current branch, with tags or force push (right-click: pick directly)"><i class="ci" data-icon="repo-push"></i><span class="lbl">Push</span></button>
+    <button class="tb" data-cmd="pull" title="Pull current branch: rebase / ff-only / merge (right-click: pick directly)"><i class="ci" data-icon="repo-pull"></i><span class="lbl">Pull</span><span class="tbcount" id="pullCount" hidden></span></button>
+    <button class="tb" data-cmd="push" title="Push current branch, with tags or force push (right-click: pick directly)"><i class="ci" data-icon="repo-push"></i><span class="lbl">Push</span><span class="tbcount" id="pushCount" hidden></span></button>
   </span>
   <span class="tgroup">
     <button class="tb" data-cmd="createBranch" title="New branch from HEAD (right-click: checkout / create only / worktree)"><i class="ci" data-icon="git-branch"></i><span class="lbl">Branch</span></button>
@@ -1588,6 +2125,7 @@ ${font ? `<style nonce="${nonce}">@font-face { font-family: "codicon"; font-disp
   </select>
   <input id="filter" type="search" placeholder="Filter loaded commits…">
   </span>
+  <button class="tb" id="filterBtn" title="Filter history by author, date, path, message or branches"><i class="ci" data-icon="filter"></i></button>
   <button class="tb" data-cmd="refresh" title="Refresh (F5)"><i class="ci" data-icon="refresh"></i></button>
 </div>
 <div id="querybar" hidden></div>

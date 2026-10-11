@@ -3,6 +3,7 @@ import * as path from 'path';
 import { RepoPanel } from './panel';
 import { GitCli } from './git';
 import { Integrations } from './integration';
+import { fileUrl } from './providers/links';
 import type { API, GitExtension } from './types/git';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -71,7 +72,42 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (!sha) vscode.window.setStatusBarMessage('gitSt8: that line is not committed yet', 3000);
     }),
 
-    vscode.commands.registerCommand('gitst8.fileHistory', async (arg: unknown) => {
+    // Link to the selected line(s) at the current HEAD commit on GitHub / Azure DevOps. Needs no sign-in.
+    vscode.commands.registerCommand('gitst8.copyPermalink', async () => {
+      const editor = vscode.window.activeTextEditor;
+      const t = editor && fileTarget(editor.document.uri);
+      if (!editor || !t) return;
+      const git = new GitCli(api.git.path, t.root);
+      const target = integrations.detect(await git.remotes());
+      if (!target) return vscode.window.showWarningMessage('gitSt8: no GitHub or Azure DevOps remote found for this repository.');
+      let sha: string;
+      try {
+        sha = (await git.run(['rev-parse', 'HEAD'])).trim();
+        await git.run(['cat-file', '-e', `HEAD:${t.rel}`]);
+      } catch {
+        return vscode.window.showWarningMessage(`gitSt8: ${t.rel} is not committed at HEAD, so there is nothing to link to.`);
+      }
+      if (!(await git.onRemote('HEAD'))) {
+        const pick = await vscode.window.showWarningMessage(
+          'HEAD is not on any remote-tracking branch, so this link may not work until you push.',
+          'Copy Anyway'
+        );
+        if (pick !== 'Copy Anyway') return;
+      }
+      const sel = editor.selection;
+      // A selection ending at column 0 of a line does not include that line.
+      const end = sel.isEmpty ? sel.start.line : sel.end.character === 0 && sel.end.line > sel.start.line ? sel.end.line - 1 : sel.end.line;
+      await vscode.env.clipboard.writeText(fileUrl(target.repo, sha, t.rel, { start: sel.start.line + 1, end: end + 1 }));
+      vscode.window.setStatusBarMessage(`gitSt8: permalink copied${editor.document.isDirty ? ' (file has unsaved changes, line numbers may differ)' : ''}`, 4000);
+    }),
+
+    vscode.commands.registerCommand('gitst8.applyPatch', async () => {
+      const panel = await show();
+      await panel.ready;
+      await panel.on_applyPatch();
+    }),
+
+    vscode.commands.registerCommand('gitst8.fileHistory',async (arg: unknown) => {
       const t = fileTarget(arg);
       if (!t) return;
       const panel = await show(t.root);

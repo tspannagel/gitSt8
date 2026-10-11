@@ -24,8 +24,9 @@ npm run package    # vsce package -> .vsix; release via .github/workflows/publis
 | `src/panel.ts` | `RepoPanel`: webview host (WebviewView in panel or WebviewPanel in editor, via a `Host` wrapper), state collection, every action handler |
 | `src/git.ts` | `GitCli` wrapper + parsers. No `vscode` import |
 | `src/graph.ts` | commit graph lane layout. No `vscode` import |
+| `src/{bisect,submodules,lfs,logFilter,signature,hunks,release,prdraft,commitPrompt}.ts` | pure parsers/builders per feature (bisect state, submodule/LFS status, history filter args, signature codes, diff hunks + partial patches, semver/changelog, PR title/body, LLM commit prompt). No `vscode` import; each has a test file |
 | `src/integration.ts` | GitHub/Azure DevOps: remote detection, auth (VS Code accounts + Azure PAT in SecretStorage), caching/TTL |
-| `src/providers/*` | API clients and mappers (`github.ts` GraphQL, `azure.ts` REST 7.1, `detect.ts`, `ci.ts`, `http.ts`). **Must not import `vscode`**, so they stay unit-testable |
+| `src/providers/*` | API clients and mappers (`github.ts` GraphQL, `azure.ts` REST 7.1, `detect.ts`, `links.ts` web URLs, `ci.ts`, `http.ts`). **Must not import `vscode`**, so they stay unit-testable |
 | `src/types/git.d.ts` | hand-written subset of the vscode.git API. Extend it when using more of the API |
 | `media/main.js`, `media/main.css` | webview UI, plain JS (`// @ts-nocheck`), no framework |
 
@@ -36,7 +37,7 @@ npm run package    # vsce package -> .vsix; release via .github/workflows/publis
 - **Network operations** (fetch, default pull, push, commit) use the vscode.git API (`requireRepo()`), so credentials, signing and settings match VS Code. Force-push, remote deletes and tag pushes use the CLI (`git()`).
 - **Never open an editor from git:** set `GIT_EDITOR=':'`. Interactive rebase uses `GIT_SEQUENCE_EDITOR="cp '<todo>'"` (Git for Windows runs it through sh, so use forward slashes). `runTodo()` does this.
 - **CLI calls** always add `--no-optional-locks` and `GIT_TERMINAL_PROMPT=0` (inside `GitCli.run`). Parse with `%x1f` / `%x1e` separators and `-z`, never by splitting on spaces.
-- **Graph first, integration after:** `collect()` posts `data`, then `scheduleIntegration()` loads PRs/CI and posts `integration`. A slow service must never delay the graph. Integration only reads; it never writes to GitHub/Azure DevOps (create/checkout PR is a planned next phase).
+- **Graph first, integration after:** `collect()` posts `data`, then `scheduleIntegration()` loads PRs/CI and posts `integration`. A slow service must never delay the graph. Integration reads in the background; the only writes are create-PR (`on_createPr` → `Integrations.createPullRequest`), which happen on explicit user action after a confirmation step. Check-out PR branch only uses git.
 - **GraphQL safety:** SHAs are interpolated into GitHub queries, so they are filtered to 40-char hex first. Keep that filter.
 
 ### Webview rules

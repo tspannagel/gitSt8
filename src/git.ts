@@ -1,6 +1,11 @@
 import * as cp from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import { LfsSummary, parseLfsFiles, summarizeLfs, usesLfs } from './lfs';
+import { Submodule, mergeSubmodules, parseGitlinks, parseGitmodules, parseSubmoduleStatus } from './submodules';
+import { LogFilter, authorArgs, buildFilterArgs } from './logFilter';
+import { Signature, mapSignature } from './signature';
+import { FileDiff, parseDiff } from './hunks';
 
 const FS = '\x1f';
 const RS = '\x1e';
@@ -43,6 +48,7 @@ export interface CommitDetails {
   committerEmail: string;
   commitDate: number;
   message: string;
+  signature: Signature;
 }
 
 export interface Head {
@@ -115,7 +121,7 @@ export interface FileChange {
   oldPath?: string;
 }
 
-export type OpKind = 'rebase' | 'merge' | 'cherry-pick' | 'revert';
+export type OpKind = 'rebase' | 'merge' | 'cherry-pick' | 'revert' | 'am';
 
 export interface OpState {
   kind: OpKind;
@@ -194,11 +200,11 @@ export class GitCli {
     }
   }
 
-  async log({ limit, all, query }: { limit: number; all: boolean; query?: Query | null }): Promise<{ commits: Commit[]; hasMore: boolean }> {
+  async log({ limit, all, query, filter }: { limit: number; all: boolean; query?: Query | null; filter?: LogFilter | null }): Promise<{ commits: Commit[]; hasMore: boolean }> {
     if (query?.kind === 'any') {
       // Union of message, author and file-name matches, newest first.
       const kinds: QueryKind[] = ['message', 'author', 'path'];
-      const parts = await Promise.all(kinds.map(kind => this.log({ limit, all, query: { kind, value: query.value } })));
+      const parts = await Promise.all(kinds.map(kind => this.log({ limit, all, filter, query: { kind, value: query.value } })));
       const byHash = new Map<string, Commit>();
       for (const p of parts) for (const c of p.commits) byHash.set(c.hash, c);
       const commits = [...byHash.values()].sort((a, b) => b.date - a.date);
@@ -208,6 +214,7 @@ export class GitCli {
     }
     const args = ['log', '--topo-order', `--max-count=${limit + 1}`, '--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%s%x1e'];
     let pathspec: string[] | null = null;
+    const fa = buildFilterArgs(filter, filter?.mine ? (await this.tryRun(['config', 'user.email'])).trim() : undefined);
     if (query) {
       switch (query.kind) {
         case 'path':
@@ -224,7 +231,7 @@ export class GitCli {
           args.push(`--grep=${query.value}`, '--regexp-ignore-case');
           break;
         case 'author':
-          args.push(`--author=${query.value}`, '--regexp-ignore-case');
+          fa.authors.push(query.value);
           break;
         case 'pickaxe':
           args.push(`-S${query.value}`);
@@ -234,9 +241,19 @@ export class GitCli {
           break;
       }
     }
-    if (all) args.push('--exclude=refs/stash', '--all');
+    args.push(...fa.args, ...authorArgs(fa.authors, fa.emails));
+    if (fa.authors.length || fa.emails.length) args.push('--regexp-ignore-case');
+    // A search and a filter on the message both have to match.
+    if (query?.kind === 'message' && filter?.message) args.push('--all-match');
+    if (fa.refs.length) args.push(...fa.refs);
+    else if (all) args.push('--exclude=refs/stash', '--all');
     else args.push('HEAD');
-    if (pathspec) args.push('--', ...pathspec);
+    const specs = [...(pathspec || []), ...fa.pathspec];
+    if (specs.length > 1) {
+      const i = args.indexOf('--follow');
+      if (i >= 0) args.splice(i, 1); // --follow needs exactly one path
+    }
+    if (specs.length) args.push('--', ...specs);
     const out = await this.tryRun(args);
     const commits: Commit[] = parseRecords(out).map(f => ({
       hash: f[0],
@@ -374,6 +391,9 @@ export class GitCli {
         branch: read('rebase-merge/head-name').replace(/^refs\/heads\//, ''),
         onto: read('rebase-merge/onto'),
       };
+    } else if (exists('rebase-apply/applying')) {
+      // git am (patch series) also uses rebase-apply; the marker file tells it apart from rebase.
+      state = { kind: 'am', step: Number(read('rebase-apply/next')) || 0, total: Number(read('rebase-apply/last')) || 0 };
     } else if (exists('rebase-apply')) {
       state = {
         kind: 'rebase',
@@ -397,7 +417,7 @@ export class GitCli {
   }
 
   async commit(sha: string): Promise<CommitDetails> {
-    const out = await this.run(['show', '-s', '--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%cn%x1f%ce%x1f%ct%x1f%B', sha]);
+    const out = await this.run(['show', '-s', '--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%cn%x1f%ce%x1f%ct%x1f%G?%x1f%GS%x1f%GK%x1f%B', sha]);
     const f = out.split(FS);
     return {
       hash: f[0],
@@ -408,7 +428,8 @@ export class GitCli {
       committer: f[5],
       committerEmail: f[6],
       commitDate: Number(f[7]),
-      message: (f[8] || '').trim(),
+      signature: mapSignature(f[8], f[9], f[10]),
+      message: (f.slice(11).join(FS) || '').trim(),
     };
   }
 
@@ -561,6 +582,94 @@ export class GitCli {
       if (peeled || !tags[name]) tags[name] = sha;
     }
     return tags;
+  }
+
+  /** Tag names reachable from `target` (`git tag --merged`). Tag names cannot contain newlines, so splitting lines is safe. */
+  async tagsMerged(target: string): Promise<string[]> {
+    const out = await this.tryRun(['tag', '--merged', target, '--format=%(refname:short)']);
+    return out.split('\n').map(s => s.trim()).filter(Boolean);
+  }
+
+  /** Non-merge commits in `from..to` (empty `from` = all history up to `to`), newest first, with subject and body. */
+  async commitsInRange(from: string, to: string): Promise<{ hash: string; subject: string; body: string }[]> {
+    const out = await this.run(['log', '--no-merges', '--format=%H%x1f%s%x1f%b%x1e', from ? `${from}..${to}` : to, '--']);
+    return parseRecords(out).map(r => ({ hash: r[0], subject: r[1] || '', body: (r[2] || '').trim() }));
+  }
+
+  /** `git format-patch` output of one commit (not for merges). */
+  async formatPatch(sha: string): Promise<string> {
+    return this.run(['format-patch', '-1', '--stdout', sha]);
+  }
+
+  /** Writes one numbered patch file per commit into `dir` (given oldest first); returns the file names. */
+  async formatPatches(dir: string, shas: string[]): Promise<string[]> {
+    const files: string[] = [];
+    for (let i = 0; i < shas.length; i++) {
+      const out = await this.run(['format-patch', '-1', `--start-number=${i + 1}`, `--subject-prefix=PATCH ${i + 1}/${shas.length}`, '-o', dir, shas[i]]);
+      files.push(...out.split('\n').map(l => l.trim()).filter(Boolean));
+    }
+    return files;
+  }
+
+  /** True when a remote-tracking branch contains `ref`, i.e. the commit exists on a remote (as far as last fetched). */
+  async onRemote(ref = 'HEAD'): Promise<boolean> {
+    return (await this.tryRun(['branch', '-r', '--contains', ref])).trim().length > 0;
+  }
+
+  // ---- submodules and LFS
+
+  /** Empty without a .gitmodules file, so repos without submodules pay nothing. */
+  async submodules(): Promise<Submodule[]> {
+    if (!fs.existsSync(path.join(this.root, '.gitmodules'))) return [];
+    const [status, modules, links] = await Promise.all([
+      this.tryRun(['submodule', 'status', '--recursive']),
+      this.tryRun(['config', '-f', '.gitmodules', '-z', '--get-regexp', '^submodule\\.']),
+      this.tryRun(['ls-files', '-s', '-z']),
+    ]);
+    return mergeSubmodules(parseSubmoduleStatus(status), parseGitmodules(modules), parseGitlinks(links));
+  }
+
+  private lfsAvail?: Promise<boolean>;
+  private lfsCache?: { key: string; summary: LfsSummary };
+
+  /** Checked once per GitCli. */
+  lfsAvailable(): Promise<boolean> {
+    return (this.lfsAvail ||= this.ok(['lfs', 'version']));
+  }
+
+  /** null when the repo does not use LFS or git-lfs is missing. Cached per HEAD; call lfsInvalidate() after pull/fetch. */
+  async lfsSummary(headSha: string | null): Promise<LfsSummary | null> {
+    let attrs = '';
+    try {
+      attrs = fs.readFileSync(path.join(this.root, '.gitattributes'), 'utf8');
+    } catch {
+      return null;
+    }
+    if (!usesLfs(attrs) || !(await this.lfsAvailable())) return null;
+    const key = headSha || '';
+    if (this.lfsCache?.key === key) return this.lfsCache.summary;
+    const summary = summarizeLfs(parseLfsFiles(await this.tryRun(['lfs', 'ls-files'])));
+    this.lfsCache = { key, summary };
+    return summary;
+  }
+
+  lfsInvalidate(): void {
+    this.lfsCache = undefined;
+  }
+
+  /** Hunks of one tracked file: working tree vs index, or (staged) index vs HEAD. */
+  async fileHunks(relPath: string, staged: boolean): Promise<FileDiff> {
+    const args = ['--literal-pathspecs', 'diff', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', '-U3'];
+    if (staged) args.push('--cached');
+    return parseDiff(await this.run([...args, '--', relPath]));
+  }
+
+  /** Applies a patch from buildPatch(): stage, `reverse` + `cached` = unstage, `reverse` alone = discard from the working tree. */
+  async applyPatch(patch: string, mode: { cached: boolean; reverse: boolean }): Promise<void> {
+    const args = ['apply', '--whitespace=nowarn'];
+    if (mode.cached) args.push('--cached');
+    if (mode.reverse) args.push('--reverse');
+    await this.run([...args, '-'], { input: patch });
   }
 }
 

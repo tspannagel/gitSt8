@@ -3,7 +3,7 @@ import { RemoteInfo } from './git';
 import { AZURE_DEVOPS_SCOPE, AzureDevOpsClient } from './providers/azure';
 import { parseRemoteUrl, repoLabel } from './providers/detect';
 import { GitHubClient } from './providers/github';
-import { AuthError, CiStatus, ProviderClient, ProviderId, PullRequest, RepoRef } from './providers/types';
+import { AuthError, CiStatus, NewPullRequest, ProviderClient, ProviderId, PullRequest, RepoRef } from './providers/types';
 
 /** What the webview needs to show hosting-service information. */
 export interface IntegrationState {
@@ -114,7 +114,7 @@ export class Integrations {
   async setAzurePat(org?: string): Promise<boolean> {
     const pat = await vscode.window.showInputBox({
       prompt: org
-        ? `Azure DevOps personal access token for '${org}' (scopes: Code read, Build read)`
+        ? `Azure DevOps personal access token for '${org}' (scopes: Code read, Build read; Code read & write to create pull requests)`
         : 'Azure DevOps personal access token (scopes: Code read, Build read). Used for every organization without its own token.',
       password: true,
       ignoreFocusOut: true,
@@ -134,6 +134,20 @@ export class Integrations {
     this.statusCache.clear();
     this.prCache.clear();
     this.changed.fire();
+  }
+
+  // ---------------------------------------------------------------- writes
+
+  /** Opens a pull request. Only call on explicit user action. Signs in interactively if needed. */
+  async createPullRequest(repo: RepoRef, input: NewPullRequest): Promise<PullRequest> {
+    this.interactive.add(repo.provider);
+    try {
+      const pr = await this.client(repo.provider).createPullRequest(repo, input);
+      this.invalidate();
+      return pr;
+    } finally {
+      this.interactive.delete(repo.provider);
+    }
   }
 
   // ---------------------------------------------------------------- data
