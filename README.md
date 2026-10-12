@@ -1,3 +1,5 @@
+<img src="media/logo.png" alt="gitSt8 logo" width="128" align="right">
+
 # gitSt8
 
 **One view for the git workflows the built-in Source Control view makes awkward.**
@@ -65,7 +67,7 @@ Prefer an editor tab? Set `"gitst8.location": "editor"`. You can also drag the p
    sidebar                    commit graph                        details pane
 ```
 
-**Toolbar.** The repository picker comes first (see [multiple repositories](#multiple-repositories)), then the current branch (shown in red when HEAD is detached). Next come the main actions, the **All branches** toggle, search, and refresh. When space is tight, buttons shrink to icons; hover to see what they do.
+**Toolbar.** The repository picker comes first (see [multiple repositories](#multiple-repositories)), then the current branch (shown in red when HEAD is detached). Next come the main actions, the **All branches** toggle, **Filter** (see [search history](#search-history)), search, and refresh. **Pull** and **Push** show a count badge when the current branch is behind or ahead of its upstream: commits to pull (as of the last fetch) and commits to push. When space is tight, buttons shrink to icons; hover to see what they do.
 
 **Sidebar.** Collapsible sections with a color per kind of ref. Click an entry to jump to its commit in the graph, double-click to check it out (or to open a worktree), and right-click for everything else. Each section header has a **⋯** menu with section-wide actions. The filter box at the top filters every section by name.
 
@@ -77,10 +79,12 @@ Prefer an editor tab? Set `"gitst8.location": "editor"`. You can also drag the p
 | **Tags** | Tags, newest version first (`v1.10` sorts above `v1.9`) | Solid: annotated · faded: lightweight · `local only` / `remote only` / `differs` after comparing with a remote |
 | **Worktrees** | All worktrees of the repository | Root icon: this window · lock: locked · `prunable`: folder is gone |
 | **Stashes** | Stash entries with their messages | |
+| **Submodules** | Submodules (only when the repository has any) | `not initialized` · `modified` (checked-out commit differs from the recorded one) · `conflict` |
+| **LFS** | Git LFS files (only when the repository uses LFS) | `N not downloaded`: pointer files whose content isn't fetched yet |
 
-**Commit graph.** Every branch is drawn with its own lane. Labels on a commit show the local branches (green), remote branches (blue), tags (amber) and stashes (pink) that point at it. When your working tree has changes, an **Uncommitted changes** row sits on top. History loads in pages of 400 commits; use **Load more** at the bottom.
+**Commit graph.** Every branch is drawn with its own lane. Labels on a commit show the local branches (green), remote branches (blue), tags (amber) and stashes (pink) that point at it. During a [bisect](#find-a-bad-commit-with-bisect), good, bad, skipped and next-to-test commits get markers too. When your working tree has changes, an **Uncommitted changes** row sits on top. History loads in pages of 400 commits; use **Load more** at the bottom.
 
-**Commit details** open inline, right under the commit you click, so the commit box stays where it is. Click the commit again to close them.
+**Commit details** open inline, right under the commit you click, so the commit box stays where it is. Click the commit again to close them. Signed commits show a badge next to the author (verified, unverified, bad, expired or revoked, or "can't verify" when git cannot check the signature, e.g. gpg is missing or `gpg.ssh.allowedSignersFile` is not set); hover it for the signer and key. Unsigned commits show nothing.
 
 **Details pane.** Shows the commit box (staged and unstaged changes) by default. A comparison, a stash, the reflog or a multi-selection temporarily take its place; clicking a single commit (or clearing the selection) brings the commit box back. Click any file to open VS Code's diff editor, and right-click it for *Open file*, *File history* and *Copy path*. Drag the divider to resize the pane. It sits to the right of the graph in the bottom panel and below it in a tall editor tab.
 
@@ -105,6 +109,8 @@ Prefer an editor tab? Set `"gitst8.location": "editor"`. You can also drag the p
 3. Click a staged file to diff HEAD ↔ index, or an unstaged file to diff index ↔ working tree.
 4. Type a message and press `Ctrl+Enter` (`Cmd+Enter` on macOS) or click the button.
 
+**Stage parts of a file.** Click the chevron at the left of a file in *Staged changes* or *Changes* to expand its diff inline. Each hunk has its own buttons: **Stage hunk** / **Discard hunk** for unstaged files, **Unstage hunk** for staged ones. To work on single lines, click changed (`+` / `-`) lines to select them, or Shift+click to select a range within one hunk; then use **Stage selected lines**, **Unstage selected lines** or **Discard selected lines**. Unselected removed lines stay as they are and unselected added lines are left out, the same as edit mode in `add -p`. Discarding asks first. The diff is read again right before applying, so if the file changed in the meantime gitSt8 shows a warning instead of applying anything. Expanded files stay open across refreshes. Untracked, conflicted and binary files can only be staged as a whole, and a file's mode change always goes with the whole file.
+
 Right-click a changed file to ignore it:
 
 | Menu entry | Adds to | Pattern |
@@ -122,6 +128,8 @@ Options:
 - **Skip hooks** runs `--no-verify`.
 - If nothing is staged, the button turns into **Stage all & commit**.
 
+**Generate a message.** When a language model is available (VS Code's Language Model API, for example through GitHub Copilot), a sparkle button appears next to the message box. Click it to draft a message from your staged diff, or from all tracked changes if nothing is staged. The text streams into the box and the button turns into a stop button while it runs. The prompt includes the diff (long diffs are shortened per file), the file summary, the branch name and your last 15 commit subjects, so the message follows your repository's style, including Conventional Commits when you use them. An empty box is replaced; if you already typed a draft it stays, and the generated text is added below a `--- generated ---` line for you to pick from. Edit it before you commit. **Privacy:** your diff is sent to the model provider only when you click the button. Turn the feature off with `gitst8.ai.enabled`.
+
 Commits go through VS Code's Git extension, so commit signing and `git.*` settings behave exactly as in the Source Control view. Your draft message survives refreshes.
 
 ### Fetch, pull, push
@@ -129,7 +137,7 @@ Commits go through VS Code's Git extension, so commit signing and `git.*` settin
 | Button | What it does |
 | --- | --- |
 | **Fetch** | `git fetch --all --prune`: updates every remote and removes remote branches that were deleted on the server |
-| **Pull** | Asks how: repository default, `--rebase`, `--rebase --autostash`, `--ff-only`, or merge |
+| **Pull** | Asks how: repository default, `--rebase`, `--rebase --autostash`, `--ff-only`, merge, or **force** (fetch, then `reset --hard` to the upstream; asks first and lists the local commits and uncommitted changes it discards, untracked files are kept) |
 | **Push** | Asks what to push: the current branch only, the branch with `--follow-tags` (annotated tags on the pushed commits), the branch plus all tags, all tags only, or one of three force pushes (see below). Without an upstream, you pick a remote and the upstream is set. Tag pushes and force pushes use the git CLI |
 
 **Right-click a toolbar button** to pick a variant directly instead of going through the quick pick:
@@ -137,7 +145,7 @@ Commits go through VS Code's Git extension, so commit signing and `git.*` settin
 | Button | Right-click menu |
 | --- | --- |
 | **Fetch** | Fetch all & prune · Fetch all without pruning · Fetch one remote & prune (with several remotes) |
-| **Pull** | Default · `--rebase` · `--rebase --autostash` · `--ff-only` · `--no-rebase` (merge) |
+| **Pull** | Default · `--rebase` · `--rebase --autostash` · `--ff-only` · `--no-rebase` (merge) · `--force` (reset to upstream) |
 | **Push** | Push · `--follow-tags` · and all tags · the three force pushes · Push all tags |
 | **Branch** | Create and checkout · Create only · Create in a new worktree |
 | **Stash** | Tracked changes · including untracked · staged only · `--keep-index` |
@@ -183,6 +191,19 @@ The search box has several modes:
 | **Diff matches regex** | Whose changed lines match a regex (`git log -G`) |
 | **File / folder** | That touch a file or folder. Part of a name (`panel`) matches any file or folder containing it, at any depth. An exact path shows that file's history and follows renames |
 
+The **Filter** button (funnel icon) in the toolbar opens a form above the graph. Filters combine with each other and with the search above (all of them must match):
+
+| Filter | Shows commits… |
+| --- | --- |
+| **Author** | By that name or email. **Only my commits** uses your `user.email` |
+| **Since / Until** | In a date range. Anything git accepts works: `2.weeks.ago`, `2026-01-01` |
+| **Path** | That touch the given files or folders (comma-separated) |
+| **Message** | Whose message matches a regex |
+| **No merges** / **First parent only** | Hide merge commits, or follow only the first parent of merges |
+| **Branches…** | Reachable from the branches you pick, instead of All branches / current branch |
+
+Active filters show as removable chips above the graph, with **Clear all**. Branch, no-merges and first-parent filters keep the real graph; the others show a single line like search results.
+
 Results show as a single line with a banner above. Files matching your search are highlighted and listed first in the details. Click **Clear search** to go back to the full graph. The **All branches** toggle decides whether search covers every branch or only HEAD.
 
 ### From the editor
@@ -204,6 +225,27 @@ For inline blame annotations, use VS Code's built-in setting `git.blame.editorDe
 - `Ctrl`+click (`Cmd`+click on macOS) two commits to compare them. The older commit goes on the left. The header shows how many commits are on each side; **swap** reverses the comparison.
 - Right-click → **Compare with HEAD** / **Compare with working tree** / **Compare with ‹upstream›**.
 - Click any file in the list to open the side-by-side diff.
+
+### Patches and links
+
+**Patches.** Right-click a commit → **Copy as patch** or **Save as patch…** (`git format-patch`; hidden for merge commits). Select several commits and right-click → **Save as patch files…** to write one numbered file per commit (oldest first) into a folder you pick.
+
+To apply one, right-click **Stash** in the toolbar (or the Stashes section menu, or run **gitSt8: Apply Patch…**) → **Apply patch…**, choose the file, then how to apply it:
+
+- **As commits** (`git am --3way`): keeps author, date and message.
+- **To the working tree** (`git apply --3way`): leaves the changes uncommitted.
+- **To the index** (`git apply --cached`): stages them without touching files.
+
+If `git am` stops on a conflict, the banner shows **Applying patches** with Continue, Skip and Abort.
+
+**Copy helpers.** The commit menu also has **Copy short SHA** and **Copy full message**.
+
+**Links to GitHub / Azure DevOps.** These only build URLs from the remote, so they work without signing in.
+
+- Commit menu: **Open commit on GitHub / Azure DevOps** and **Copy link to commit**.
+- File menu in the details pane: **Open file on …** and **Copy permalink** (pinned to that commit).
+- Branch menu: **Create pull request in browser…** for pushed branches that have no open pull request. The target is the stack base. If the branch is ahead of its upstream, gitSt8 offers to push first.
+- Editor right-click or command palette → **Copy Permalink to Line(s)** links the selection at the current HEAD commit. If HEAD is not on any remote-tracking branch, gitSt8 warns that the link may not work yet.
 
 ---
 
@@ -231,6 +273,18 @@ Stage the fix, right-click the commit it belongs to → **Fixup staged changes i
 
 Select commits with `Ctrl`+click (`Cmd`+click on macOS) or `Shift`+click, then right-click → **Cherry-pick N commits onto ‹current›** (applied oldest first) or **Revert N commits** (newest first). Merge commits must be handled one at a time.
 
+### Find a bad commit with bisect
+
+`git bisect` finds the commit that introduced a bug by binary search. Start it from the graph (requires a clean working tree):
+
+- Right-click a commit that still worked → **Bisect: mark as good (HEAD is bad)**.
+- Right-click a broken commit → **Bisect: mark as bad…** and enter a known good commit, branch or tag.
+- Select exactly two commits → **Bisect between these**. The older one is good, the newer one is bad.
+
+gitSt8 checks out a commit in the middle and shows a banner: *Bisecting: ~N revisions left (~K steps)*. Test your code, then press **Good**, **Bad** or **Skip** (for a commit you cannot test). You can also right-click any commit → **Bisect: mark good / mark bad / skip**. Graph rows get pills for good, bad, skipped and the commit to test next. The counts ignore skipped commits, so they are an upper bound if you skip.
+
+When the search ends, the banner names the first bad commit: **Show commit** selects it in the graph. **Reset** ends the bisect and returns you to your original branch. Automated `git bisect run` scripts are not supported.
+
 ### Stacked branches
 
 When several of your branches build on each other (`main ← feature-a ← feature-b`), the **Stack** section shows them as a chain down to the base branch, with the number of commits each adds. From the section's **⋯** menu:
@@ -248,6 +302,19 @@ A worktree is a second checkout of the same repository in another folder. It let
 - **Lock / Unlock**, **Remove** (asks before force-removing a worktree with changes), and **Prune stale worktrees**.
 
 Trying to check out a branch that is already checked out in another worktree offers to open that worktree instead.
+
+### Submodules and Git LFS
+
+Two sidebar sections appear only when they apply, so repositories without them stay as fast and uncluttered as before.
+
+**Submodules** (the repository has a `.gitmodules` file). Each entry shows the submodule path and a badge: *not initialized*, *modified* (the checked-out commit differs from the one the repository records) or *conflict*. Hover for the URL, branch and the short recorded / checked-out commits.
+
+- **Open in gitSt8:** double-click, or right-click → *Open in gitSt8*, switches the view to the submodule's own repository. Also *Open in new window*, *Reveal in file explorer* and *Copy path*.
+- **Initialize & update** / **Update to recorded commit:** runs `git submodule update --init --recursive` for that submodule, which also clears a *modified* badge by checking out the recorded commit (commits made inside the submodule are not lost, they just are no longer checked out).
+- **Sync URL:** re-reads the URL from `.gitmodules` (`git submodule sync --recursive`).
+- Submodules **⋯** → *Update all* and *Sync all URLs*.
+
+**LFS** (`.gitattributes` contains `filter=lfs` and `git lfs` is installed). Shows how many files are tracked by LFS and how many are only pointer files (*not downloaded*). The **⋯** menu offers *Pull LFS files* (`git lfs pull`: download and check out) and *Fetch LFS files* (`git lfs fetch`: download only), with a progress notification. The file count is cached per HEAD commit, so it updates after the next commit or checkout, or after you use the LFS actions here (not after a `git lfs pull` in a terminal).
 
 ### Branch cleanup
 
@@ -270,13 +337,20 @@ The current branch, the base branch and branches checked out in other worktrees 
 | Fetch tags | Tags **⋯** → *Fetch tags* |
 | Delete local tags missing on the remote | Tags **⋯** → *Delete local tags missing on remote (prune)*. **Also deletes tags you never pushed.** Compare first |
 
+**Release tags and changelogs.** Right-click a commit → *Create release tag here…*, or Tags **⋯** → *Create release tag…* (tags `HEAD`):
+
+- gitSt8 finds the highest semver tag (`1.2.3`, `v1.2.3`, `release-1.2.3`; prereleases rank below releases) reachable from the commit and reads the commits since then as [Conventional Commits](https://www.conventionalcommits.org). `feat` suggests a minor bump, `fix` and everything else a patch, and a `!` or a `BREAKING CHANGE:` footer a major bump (before 1.0 a breaking change only suggests a minor bump).
+- A quick pick offers the next patch / minor / major version (the suggestion first) or *Custom…*. With no version tag yet it offers `v0.1.0`, `v1.0.0` or custom.
+- The annotated tag's message is the generated changelog (Breaking changes, Features, Fixes, Performance, Other; each line with its short SHA) or just “Release <version>”. Afterwards you can push the tag.
+- Tags **⋯** → *Generate changelog…* (pick a from-tag, then `HEAD` or another tag) and right-click a tag → *Changelog since this tag* open the changelog as an untitled Markdown document. Merge commits are skipped; commits that are not Conventional Commits go under *Other*.
+
 ### Remotes
 
 Remotes **⋯** → **Add remote**. Right-click a remote's name for **Fetch & prune**, **Prune stale remote branches**, **Copy URL**, **Change URL**, **Rename**, **Remove**.
 
 ### GitHub and Azure DevOps
 
-When a remote points at GitHub, GitHub Enterprise or Azure DevOps, gitSt8 shows hosting-service information next to your history. It is read-only: nothing is changed on the server.
+When a remote points at GitHub, GitHub Enterprise or Azure DevOps, gitSt8 shows hosting-service information next to your history. Status is read in the background; the only thing gitSt8 ever writes to the server is a pull request you explicitly create (below).
 
 | Where | What you see |
 | --- | --- |
@@ -290,6 +364,12 @@ When a remote points at GitHub, GitHub Enterprise or Azure DevOps, gitSt8 shows 
 
 - **GitHub**: the built-in GitHub account (scope `repo`). For GitHub Enterprise, set `github-enterprise.uri`.
 - **Azure DevOps**: your Microsoft (Entra ID) account. If your organization blocks that, or you use an MSA-backed organization, use a personal access token with *Code (read)* and *Build (read)* scopes: **gitSt8: Set Azure DevOps Personal Access Token**. Tokens live in VS Code's secret storage, either for all organizations or for one.
+
+**Create a pull request.** Right-click a local branch without an open PR and choose *Create pull request…*. If the branch is not on the integration remote yet, or is ahead of it, you are asked to push first. Then pick the target branch (default: the stack base), edit the title (the commit subject when there is exactly one commit, else the humanized branch name), and choose *Create* or *Create as draft*. The description is a bullet list of the commit subjects. Nothing is sent until you confirm the last step; afterwards a notification offers *Open in Browser*.
+
+**Check out a PR branch.** Right-click a PR pill and choose *Check out PR branch*. A PR from the same repository fetches its branch and checks out a tracking branch. A GitHub fork PR is fetched from `pull/<n>/head` into a local `pr/<n>` branch (you are asked what to do if it already exists). Azure DevOps fork PRs cannot be fetched this way.
+
+**Token scopes for writes.** GitHub needs the `repo` scope (the built-in sign-in has it). An Azure DevOps personal access token needs *Code (Read & write)* to create pull requests, in addition to the read scopes. If the service refuses, gitSt8 tells you which scope is missing.
 
 Until you sign in, the chip shows a **Sign in** button. gitSt8 never opens a sign-in prompt on its own.
 
@@ -311,6 +391,8 @@ In a multi-root workspace, or a folder with nested repositories, the repository 
 | --- | --- | --- |
 | `gitSt8: Open Repository View` | `Ctrl+Alt+Shift+G` / macOS `Cmd+Option+Shift+G` | Open or focus the view |
 | `gitSt8: Show Line's Commit in gitSt8` | `Ctrl+Alt+Shift+B` / macOS `Cmd+Option+Shift+B` (editor focused) | Jump to the commit of the line under the cursor |
+| `gitSt8: Copy Permalink to Line(s)` | | Copies a GitHub / Azure DevOps link to the selected lines at the current HEAD commit (also in the editor right-click menu) |
+| `gitSt8: Apply Patch…` | | Apply a `.patch`, `.diff` or `.mbox` file |
 | `gitSt8: File History in gitSt8` | | History of the active or right-clicked file or folder |
 | `gitSt8: Fetch All & Prune` | | Fetch and prune every open repository |
 | `gitSt8: Sign in to GitHub` / `Sign in to Azure DevOps` | | Sign in for pull requests and CI status |
@@ -335,6 +417,8 @@ Rebind these in **Keyboard Shortcuts** (`Ctrl+K Ctrl+S`, on macOS `Cmd+K Cmd+S`;
 | `gitst8.location` | `panel` | `panel`: bottom panel next to the terminal. `editor`: an editor tab |
 | `gitst8.stackBase` | `""` | Base branch for the Stack section and branch cleanup. Empty means auto-detect |
 | `gitst8.staleBranchDays` | `60` | Days without commits before a branch is marked stale |
+| `gitst8.ai.enabled` | `true` | Show the button that drafts a commit message with a language model. Hidden when no model is available |
+| `gitst8.ai.modelFamily` | `""` | Model family for commit messages (for example `gpt-4o`). Empty: first available model, Copilot preferred |
 | `gitst8.integrations.enabled` | `true` | Show pull requests and CI status from GitHub / Azure DevOps |
 | `gitst8.integrations.remote` | `""` | Remote to integrate with. Empty: `origin`, else the first supported remote |
 | `gitst8.integrations.commitsToCheck` | `60` | Newest commits that get a CI status (branch tips are always included) |

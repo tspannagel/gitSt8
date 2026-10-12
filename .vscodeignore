@@ -9,3 +9,5 @@ CLAUDE.md
 .gitignore
 .github/**
 .vscode-test/**
+.claude/**
+media/gitst8.png

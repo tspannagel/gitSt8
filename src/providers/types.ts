@@ -47,10 +47,20 @@ export interface PullRequest {
 /** Authorization header value, e.g. "Bearer …" or "Basic …". */
 export type AuthHeader = string;
 
+export interface NewPullRequest {
+  source: string;
+  target: string;
+  title: string;
+  body: string;
+  draft: boolean;
+}
+
 export interface ProviderClient {
   pullRequests(repo: RepoRef): Promise<PullRequest[]>;
   /** CI status per commit; commits without any CI are left out. */
   statuses(repo: RepoRef, shas: string[]): Promise<Record<string, CiStatus>>;
+  /** Opens a pull request. The only write to a hosting service; call it on explicit user action only. */
+  createPullRequest(repo: RepoRef, input: NewPullRequest): Promise<PullRequest>;
 }
 
 export class AuthError extends Error {}

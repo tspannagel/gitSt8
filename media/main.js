@@ -13,7 +13,7 @@
 
   // Code points of VS Code's bundled codicon font (loaded by the extension).
   const ICONS = {
-    add: 0xea60, archive: 0xea98, 'arrow-down': 0xea9a, 'arrow-up': 0xeaa1, check: 0xeab2, 'chevron-down': 0xeab4,
+    add: 0xea60, archive: 0xea98, 'arrow-down': 0xea9a, 'arrow-up': 0xeaa1, check: 0xeab2, 'chevron-down': 0xeab4, 'chevron-right': 0xeab6,
     'circle-filled': 0xea71, 'circle-outline': 0xeabc, 'circle-slash': 0xeabd, 'clear-all': 0xeabf, close: 0xea76,
     cloud: 0xebaa, 'cloud-download': 0xeac2, 'cloud-upload': 0xeac3, copy: 0xebcc, discard: 0xeae2, edit: 0xea73,
     ellipsis: 0xea7c, filter: 0xeaf1, folder: 0xea83, 'folder-opened': 0xeaf7, 'git-branch': 0xec6f,
@@ -24,7 +24,10 @@
     'debug-disconnect': 0xead0, milestone: 0xeb20, server: 0xeb50,
     github: 0xea84, 'azure-devops': 0xebe8, 'git-pull-request': 0xea64, 'git-pull-request-draft': 0xebdb,
     'pass-filled': 0xebb3, error: 0xea87, 'circle-large-outline': 0xebb5, skip: 0xec6a, 'sign-in': 0xea6f,
-    'debug-rerun': 0xebc0, rocket: 0xeb44,
+    'debug-rerun': 0xebc0, rocket: 0xeb44, sparkle: 0xec10, 'stop-circle': 0xeba5,
+    'list-flat': 0xeb84, 'file-code': 0xeae9, save: 0xeb4b, link: 0xeb15,
+    'file-submodule': 0xeaec, database: 0xeace,
+    'verified-filled': 0xebe9, unverified: 0xeb76, question: 0xeb32,
   };
   const ic = (name, cls = '') => `<i class="ci ${cls}" aria-hidden="true">${ICONS[name] ? String.fromCharCode(ICONS[name]) : ''}</i>`;
   const fillIcons = (root = document) =>
@@ -80,7 +83,19 @@
           S.details = m.data.wip;
           renderDetails();
         }
+        refreshHunks();
         break;
+      case 'hunks': {
+        const key = hunkKey(m.staged, m.path);
+        if (!hunkOpen[key]) break;
+        hunkData[key] = m.file;
+        const sel = hunkSel[key];
+        const cur = sel && m.file.hunks[sel.hunk];
+        if (sel && (!cur || hunkSig(cur) !== sel.sig)) delete hunkSel[key]; // the diff changed under the selection
+        const view = [...document.querySelectorAll('.hunkview')].find(v => v.dataset.key === key);
+        if (view) view.innerHTML = hunkViewHtml(key, m.staged);
+        break;
+      }
       case 'reset':
         S.selected = S.anchor = S.details = S.inline = S.highlight = null;
         S.multi = [];
@@ -97,11 +112,16 @@
         }
         S.details = m.details;
         renderDetails();
+        refreshHunks();
         break;
       case 'reveal':
         if (m.path !== undefined) S.highlight = m.path || null;
         if (commitBySha(m.sha)) select(m.sha, true);
         else if (m.sha !== 'WIP') post('commitDetails', { sha: m.sha });
+        break;
+      case 'filterRefs':
+        S.filterRefs = m.refs;
+        updateFilterRefsBtn();
         break;
       case 'queryApplied':
         S.highlight = m.path || null;
@@ -130,6 +150,28 @@
         break;
       case 'irebase':
         openRebaseEditor(m);
+        break;
+      case 'aiAvailable':
+        S.aiAvailable = !!m.available;
+        if (S.details?.kind === 'wip') renderDetails();
+        break;
+      case 'commitMsgChunk':
+        if (!S.aiGen) break;
+        S.aiGen.text += m.text;
+        setGeneratedMessage(S.aiGen.text);
+        break;
+      case 'commitMsgDone': {
+        const g = S.aiGen;
+        S.aiGen = null;
+        if (g && !m.cancelled && m.text) setGeneratedMessage(m.text);
+        if (S.details?.kind === 'wip') renderDetails();
+        break;
+      }
+      case 'commitMsgError':
+        S.aiGen = null;
+        S.aiError = m.text;
+        if (S.details?.kind === 'wip') renderDetails();
+        showAiError();
         break;
       case 'busy':
         $('#busy').hidden = !m.busy;
@@ -175,33 +217,135 @@
         : `${ic('debug-disconnect', 'sm')}detached @ ${esc(short(d.head.sha) || '—')}`
       : '';
     head.title = d.head?.branch ? `Current branch: ${d.head.branch}` : 'HEAD is detached';
+    // Commits waiting to be pulled / pushed for the current branch (behind/ahead of its upstream, as of the last fetch).
+    const b = d.head?.branch ? (d.refs?.local || []).find(x => x.name === d.head.branch) : null;
+    const up = b?.upstream && !b.gone ? b.upstream : null;
+    setCount('pull', up ? b.behind : 0, n => `${n} commit(s) to pull from ${up} (as of the last fetch)`);
+    setCount('push', up ? b.ahead : 0, n => `${n} commit(s) to push to ${up}`);
+  }
+
+  function setCount(cmd, n, hint) {
+    const btn = $(`#toolbar [data-cmd="${cmd}"]`);
+    const el = $(`#${cmd}Count`);
+    if (!btn || !el) return;
+    if (btn.dataset.title === undefined) btn.dataset.title = btn.title;
+    el.hidden = !n;
+    el.textContent = n ? String(n) : '';
+    btn.title = n ? `${hint(n)}\n${btn.dataset.title}` : btn.dataset.title;
+  }
+
+  const FILTER_FLAGS = ['mine', 'noMerges', 'firstParent'];
+
+  /** Chip labels for the active history filter. */
+  function filterChips(f) {
+    if (!f) return [];
+    const chips = [];
+    if (f.author) chips.push(['author', `Author: ${f.author}`]);
+    if (f.mine) chips.push(['mine', 'Only my commits']);
+    if (f.since) chips.push(['since', `Since ${f.since}`]);
+    if (f.until) chips.push(['until', `Until ${f.until}`]);
+    if (f.paths?.length) chips.push(['paths', `Path: ${f.paths.join(', ')}`]);
+    if (f.message) chips.push(['message', `Message: ${f.message}`]);
+    if (f.refs?.length) chips.push(['refs', `Branches: ${f.refs.join(', ')}`]);
+    if (f.noMerges) chips.push(['noMerges', 'No merges']);
+    if (f.firstParent) chips.push(['firstParent', 'First parent only']);
+    return chips;
   }
 
   function renderQueryBar() {
     const q = S.data.query;
+    const f = S.data.filter;
     const el = $('#querybar');
-    if (!q) {
+    $('#filterBtn')?.classList.toggle('active', !!f);
+    if (!q && !f && !S.filterOpen) {
       el.hidden = true;
+      el.innerHTML = '';
       return;
     }
-    const v = esc(q.value);
-    const what = {
-      any: `Message, author or file name matches “${v}”`,
-      message: `Message matches “${v}”`,
-      author: `Author matches “${v}”`,
-      pickaxe: `Changes that add or remove “${v}”`,
-      regex: `Diffs matching /${v}/`,
-      path: q.exact ? `History of <code>${v}</code>${q.isDir ? ' (folder)' : ''}` : `Files or folders named *${v}*`,
-    }[q.kind];
-    const n = S.data.commits.length;
+    let row = el.querySelector('.qrow');
+    if (!row) {
+      el.innerHTML = '<div class="qrow"></div>';
+      row = el.querySelector('.qrow');
+    }
     el.hidden = false;
-    el.innerHTML = `${ic('search')}<span>${what}</span><span class="dir">${n}${S.data.hasMore ? '+' : ''} commit(s)${S.data.showAll ? ' · all branches' : ' · current branch'}</span>
-      <span class="spacer"></span><button class="tb" data-clearquery="1">${ic('close', 'sm')}Clear search</button>`;
+    const n = S.data.commits.length;
+    const scope = f?.refs?.length ? '' : S.data.showAll ? ' · all branches' : ' · current branch';
+    const count = `<span class="dir">${n}${S.data.hasMore ? '+' : ''} commit(s)${scope}</span>`;
+    let html = '';
+    if (q) {
+      const v = esc(q.value);
+      const what = {
+        any: `Message, author or file name matches “${v}”`,
+        message: `Message matches “${v}”`,
+        author: `Author matches “${v}”`,
+        pickaxe: `Changes that add or remove “${v}”`,
+        regex: `Diffs matching /${v}/`,
+        path: q.exact ? `History of <code>${v}</code>${q.isDir ? ' (folder)' : ''}` : `Files or folders named *${v}*`,
+      }[q.kind];
+      html += `${ic('search')}<span>${what}</span>`;
+    }
+    const chips = filterChips(f);
+    if (chips.length) {
+      html += `${ic('filter')}${chips.map(([k, label]) => `<span class="fchip" title="${esc(label)}"><span class="fl">${esc(label)}</span><button class="icon" data-rmfilter="${k}" title="Remove this filter">${ic('close', 'xs')}</button></span>`).join('')}`;
+    }
+    html += count + '<span class="spacer"></span>';
+    if (chips.length) html += `<button class="tb" data-clearfilter="1">${ic('close', 'sm')}Clear all</button>`;
+    if (q) html += `<button class="tb" data-clearquery="1">${ic('close', 'sm')}Clear search</button>`;
+    row.innerHTML = html;
+    syncFilterForm();
+  }
+
+  /** The inline filter form lives in the query bar; it is built once per opening so typing survives refreshes. */
+  function syncFilterForm() {
+    const el = $('#querybar');
+    const form = el.querySelector('#filterForm');
+    if (!S.filterOpen) {
+      form?.remove();
+      return;
+    }
+    if (form) return;
+    const f = S.data?.filter || {};
+    S.filterRefs = f.refs ? [...f.refs] : [];
+    const input = (id, label, val, ph) => `<label class="ff">${label}<input id="ff_${id}" type="text" value="${esc(val || '')}" placeholder="${esc(ph)}"></label>`;
+    const flag = (id, label) => `<label class="check"><input type="checkbox" id="ff_${id}" ${f[id] ? 'checked' : ''}>${label}</label>`;
+    el.insertAdjacentHTML('beforeend', `<div id="filterForm">
+      ${input('author', 'Author', f.author, 'name or email')}
+      ${input('since', 'Since', f.since, '2.weeks.ago, 2026-01-01')}
+      ${input('until', 'Until', f.until, '2026-06-30')}
+      ${input('paths', 'Path', (f.paths || []).join(', '), 'src/app, README.md')}
+      ${input('message', 'Message', f.message, 'regex')}
+      <span class="fflags">${flag('mine', 'Only my commits')}${flag('noMerges', 'No merges')}${flag('firstParent', 'First parent only')}</span>
+      <span class="fbtns"><button class="tb" id="ff_refs"></button><button class="tb primary-tb" id="ff_apply">${ic('check', 'sm')}Apply</button><button class="tb" id="ff_close">${ic('close', 'sm')}Close</button></span>
+    </div>`);
+    updateFilterRefsBtn();
+  }
+
+  function updateFilterRefsBtn() {
+    const b = $('#ff_refs');
+    if (!b) return;
+    const n = S.filterRefs?.length || 0;
+    b.innerHTML = `${ic('git-branch', 'sm')}${n ? `Branches (${n})…` : 'Branches…'}`;
+    b.title = n ? S.filterRefs.join(', ') : 'Show only the history of selected branches';
+  }
+
+  function applyFilterForm() {
+    const val = id => $('#ff_' + id).value.trim();
+    const filter = {
+      author: val('author'),
+      since: val('since'),
+      until: val('until'),
+      message: val('message'),
+      paths: val('paths').split(',').map(x => x.trim()).filter(Boolean),
+      refs: S.filterRefs || [],
+    };
+    for (const k of FILTER_FLAGS) filter[k] = $('#ff_' + k).checked;
+    post('setFilter', { filter });
   }
 
   function renderBanner() {
     const op = S.data.op;
     const el = $('#banner');
+    if (!op && S.data.bisect?.active) return renderBisectBanner(el, S.data.bisect);
     if (!op) {
       el.hidden = true;
       el.innerHTML = '';
@@ -213,6 +357,7 @@
       merge: `Merge in progress (${esc(short(op.head))})`,
       'cherry-pick': `Cherry-pick ${op.head ? `of ${esc(short(op.head))} ` : ''}in progress`,
       revert: `Revert ${op.head ? `of ${esc(short(op.head))} ` : ''}in progress`,
+      am: `Applying patches${op.total ? ` (patch ${op.step}/${op.total})` : ''}`,
     }[op.kind];
     const ours = op.kind === 'rebase' ? 'upstream' : 'ours';
     const theirs = op.kind === 'rebase' ? 'your commit' : 'theirs';
@@ -238,9 +383,36 @@
         </li>`).join('')}</ul>` : ''}`;
   }
 
+  function renderBisectBanner(el, b) {
+    el.hidden = false;
+    if (b.culprit) {
+      const c = commitBySha(b.culprit);
+      el.innerHTML = `
+        <span class="title">${ic('error', 'sm')}Bisect found the first bad commit</span>
+        <span><b>${esc(short(b.culprit))}</b>${c ? ` ${esc(c.subject)}` : ''}</span>
+        <span class="actions">
+          <button class="primary" data-bisect="show" data-sha="${esc(b.culprit)}">Show commit</button>
+          <button data-cmd="bisectReset">Reset</button>
+        </span>`;
+      return;
+    }
+    const left = b.remaining === undefined
+      ? `Mark a good and a bad commit to start narrowing${b.bad ? '' : ' (no bad commit yet)'}.`
+      : `~${b.remaining} revision${b.remaining === 1 ? '' : 's'} left (~${b.steps} step${b.steps === 1 ? '' : 's'}). Test ${esc(short(b.current))}, then mark it.`;
+    el.innerHTML = `
+      <span class="title">${ic('search', 'sm')}Bisecting</span>
+      <span>${left}</span>
+      <span class="actions">
+        <button data-bisect="good">${ic('pass-filled', 'sm')}Good</button>
+        <button data-bisect="bad">${ic('error', 'sm')}Bad</button>
+        <button data-bisect="skip">${ic('skip', 'sm')}Skip</button>
+        <button class="danger" data-cmd="bisectReset">Reset</button>
+      </span>`;
+  }
+
   // ---- sidebar
 
-  const SECTION_ICONS = { stack: 'layers', local: 'git-branch', remote: 'cloud', tags: 'tag', worktrees: 'folder-opened', stashes: 'archive' };
+  const SECTION_ICONS = { stack: 'layers', local: 'git-branch', remote: 'cloud', tags: 'tag', worktrees: 'folder-opened', stashes: 'archive', submodules: 'file-submodule', lfs: 'database' };
 
   function section(id, title, count, inner, hasMenu = true) {
     const collapsed = S.collapsed[id];
@@ -338,6 +510,21 @@
       })
       .join('');
 
+    const smLabel = { uninitialized: 'not initialized', modified: 'modified', conflict: 'conflict' };
+    const smHtml = (d.submodules || [])
+      .filter(m => matchesSide(m.path + ' ' + m.name))
+      .map(m => {
+        const sh = x => (x ? x.slice(0, 7) : '-');
+        const tip = `${m.path}\n${m.url}${m.branch ? ' (' + m.branch + ')' : ''}\nrecorded ${sh(m.recorded)} · checked out ${sh(m.checkedOut)}`;
+        const pill = m.state === 'ok' ? '' : `<span class="pill ${m.state === 'conflict' ? 'gone' : ''}">${smLabel[m.state]}</span>`;
+        return `<div class="item" data-ref="submodule" data-path="${esc(m.path)}" data-state="${m.state}" title="${esc(tip)}">${ic('file-submodule', 'sm')}<span class="name">${esc(m.path)}</span><span class="meta">${pill}</span></div>`;
+      })
+      .join('');
+    const lfs = d.lfs;
+    const lfsHtml = lfs
+      ? `<div class="item" data-ref="lfs" title="LFS-tracked files (lfs ls-files)">${ic('database', 'sm')}<span class="name">${lfs.total} file${lfs.total === 1 ? '' : 's'} tracked</span><span class="meta">${lfs.missing ? `<span class="pill gone" title="only the pointer file is present; use Pull LFS files">${lfs.missing} not downloaded</span>` : 'all downloaded'}</span></div>`
+      : '';
+
     const stashHtml = d.stashes
       .map((s, i) => ({ s, i }))
       .filter(({ s }) => matchesSide(s.ref + ' ' + s.message))
@@ -350,6 +537,8 @@
       section('remote', 'Remotes', remote.length, remoteHtml) +
       section('tags', tagTitle, tags.length, tagItems.join('')) +
       section('worktrees', 'Worktrees', (d.worktrees || []).length, wtHtml) +
+      ((d.submodules || []).length ? section('submodules', 'Submodules', d.submodules.length, smHtml) : '') +
+      (lfs ? section('lfs', 'LFS', lfs.total, lfsHtml) : '') +
       section('stashes', 'Stashes', d.stashes.length, stashHtml);
   }
 
@@ -364,10 +553,18 @@
     for (const r of refs.remote) add(r.sha, { cls: 'remote', name: r.name, ref: 'remote', remote: r.remote, branch: r.branch });
     for (const t of refs.tags) add(t.sha, { cls: 'tag', name: t.name, ref: 'tag' });
     S.data.stashes.forEach((s, i) => add(s.parents[0], { cls: 'stash', name: s.ref, ref: 'stash', idx: i }));
+    const bis = S.data.bisect;
+    if (bis?.active) {
+      const mark = (sha, cls, name) => add(sha, { cls, name, ref: 'bisect' });
+      for (const sha of bis.good) mark(sha, 'bis-good', 'good');
+      for (const sha of bis.skipped) mark(sha, 'bis-skip', 'skipped');
+      if (bis.bad) mark(bis.bad, 'bis-bad', bis.culprit ? 'first bad' : 'bad');
+      if (bis.current && !bis.culprit) mark(bis.current, 'bis-cur', 'test this');
+    }
     return map;
   }
 
-  const BADGE_ICONS = { head: 'check', local: 'git-branch', remote: 'cloud', tag: 'tag', stash: 'archive' };
+  const BADGE_ICONS = { head: 'check', local: 'git-branch', remote: 'cloud', tag: 'tag', stash: 'archive', 'bis-good': 'pass-filled', 'bis-bad': 'error', 'bis-skip': 'skip', 'bis-cur': 'search' };
 
   // ---- hosting service integration (GitHub / Azure DevOps)
 
@@ -594,6 +791,7 @@
     return [
       { header: `#${p.number} ${p.title}` },
       { label: 'Open in browser', icon: 'link-external', run: () => post('openExternal', { url: p.url }) },
+      { label: 'Check out PR branch', icon: 'check', run: () => post('checkoutPr', { number: p.number }) },
       { label: `Compare with ${st.remote}/${p.targetBranch}`, icon: 'git-compare', run: () => compare(`${st.remote}/${p.targetBranch}`, p.headSha || `${st.remote}/${p.sourceBranch}`) },
       ...(p.headSha && commitBySha(p.headSha) ? [{ label: 'Show head commit', icon: 'go-to-file', run: () => select(p.headSha, true) }] : []),
       { label: 'Copy link', icon: 'copy', run: () => post('copy', { text: p.url }) },
@@ -677,7 +875,7 @@
    * @param {string|null} right diff right ref, null = working tree
    * @param {{act: string, icon: string, title: string, when?: (f) => boolean}[]} [actions] per-file buttons
    */
-  function fileList(files, left, right, actions = []) {
+  function fileList(files, left, right, actions = [], hunkMode = null) {
     if (!files.length) return '<div class="empty">No file changes.</div>';
     const hl = S.highlight ? S.highlight.toLowerCase() : null;
     const isHit = f => hl && (f.path.toLowerCase().includes(hl) || (f.oldPath || '').toLowerCase().includes(hl));
@@ -688,11 +886,115 @@
         const dir = i >= 0 ? f.path.slice(0, i + 1) : '';
         const base = f.path.slice(i + 1);
         const rename = f.oldPath && f.oldPath !== f.path ? ` <span class="dir">← ${esc(f.oldPath)}</span>` : '';
+        const canHunks = hunkMode && f.status !== 'U' && f.status !== '!';
+        const hkey = hunkKey(hunkMode === 'staged', f.path);
+        const open = canHunks && hunkOpen[hkey];
         return `<li class="${isHit(f) ? 'hl' : ''}" data-path="${esc(f.path)}" data-old="${esc(f.oldPath || '')}" data-left="${esc(left)}" data-right="${esc(right || '')}" data-status="${f.status}" title="Open diff (right-click for more)">
+          ${hunkMode ? `<span class="hchev">${canHunks ? `<button class="icon" data-hunktoggle="${hunkMode === 'staged' ? 's' : 'u'}" title="${open ? 'Hide' : 'Show'} hunks (stage parts of this file)" aria-expanded="${!!open}">${ic(open ? 'chevron-down' : 'chevron-right', 'xs')}</button>` : ''}</span>` : ''}
           <span class="st st-${f.status}">${f.status}</span><span class="fname">${esc(base)} <span class="dir">${esc(dir)}</span>${rename}</span>
-          ${actions.length ? `<span class="factions">${actions.filter(a => !a.when || a.when(f)).map(a => `<button class="icon" data-fileact="${a.act}" title="${esc(a.title)}">${ic(a.icon)}</button>`).join('')}</span>` : ''}</li>`;
+          ${actions.length ? `<span class="factions">${actions.filter(a => !a.when || a.when(f)).map(a => `<button class="icon" data-fileact="${a.act}" title="${esc(a.title)}">${ic(a.icon)}</button>`).join('')}</span>` : ''}</li>${open ? `<li class="hunkview" data-key="${esc(hkey)}" data-path="${esc(f.path)}" data-staged="${hunkMode === 'staged' ? 1 : ''}">${hunkViewHtml(hkey, hunkMode === 'staged')}</li>` : ''}`;
       })
       .join('')}</ul>`;
+  }
+
+  // ---- hunk and line staging (inline diff under a file row)
+  const hunkOpen = {}; // key -> true while a file's hunks are expanded
+  const hunkData = {}; // key -> FileDiff from the extension
+  const hunkSel = {}; // key -> { hunk, sig, lines: Set, anchor }
+  const hunkKey = (staged, path) => (staged ? 's:' : 'u:') + path;
+  const hunkSig = h => `${h.oldStart},${h.oldLines},${h.newStart},${h.newLines}`;
+
+  function hunkViewHtml(key, staged) {
+    const file = hunkData[key];
+    if (!file) return '<div class="empty">Loading…</div>';
+    if (file.binary) return '<div class="empty">Binary file: stage or unstage the whole file.</div>';
+    if (!file.hunks.length) return '<div class="empty">No textual changes (for example only a mode change).</div>';
+    const sel = hunkSel[key];
+    return file.hunks
+      .map((h, hi) => {
+        const mine = sel && sel.hunk === hi && sel.lines.size ? sel : null;
+        let o = h.oldStart;
+        let n = h.newStart;
+        const rows = h.lines
+          .map((l, li) => {
+            const ol = l.kind === '+' ? '' : o++;
+            const nl = l.kind === '-' ? '' : n++;
+            const txt = l.text.replace(/\r$/, '');
+            return `<div class="dl dl${l.kind === ' ' ? 'c' : l.kind === '+' ? 'a' : 'd'} ${mine && mine.lines.has(li) ? 'sel' : ''}" data-h="${hi}" data-l="${li}"><span class="ln">${ol}</span><span class="ln">${nl}</span><span class="sg">${l.kind === ' ' ? '' : l.kind}</span><span class="tx">${esc(txt)}${l.text.endsWith('\r') ? '<span class="eol">CR</span>' : ''}${l.noEol ? '<span class="eol">no newline at end of file</span>' : ''}</span></div>`;
+          })
+          .join('');
+        const btn = (act, label, icon, cls = '') => `<button class="${cls}" data-hact="${act}" data-h="${hi}">${ic(icon, 'xs')}${label}</button>`;
+        const hb = staged ? btn('unstage', 'Unstage hunk', 'remove') : btn('stage', 'Stage hunk', 'add') + btn('discard', 'Discard hunk', 'discard', 'danger');
+        const sb = !mine
+          ? ''
+          : staged
+            ? btn('unstage-sel', `Unstage selected lines (${mine.lines.size})`, 'remove')
+            : btn('stage-sel', `Stage selected lines (${mine.lines.size})`, 'add') + btn('discard-sel', `Discard selected lines (${mine.lines.size})`, 'discard', 'danger');
+        return `<div class="hunk"><div class="hunk-head"><span class="hh">${esc(h.header)}</span><span class="spacer"></span>${sb}${hb}</div><div class="hunk-body">${rows}</div></div>`;
+      })
+      .join('');
+  }
+
+  function hunkClick(e, view) {
+    const t = e.target;
+    const key = view.dataset.key;
+    const staged = !!view.dataset.staged;
+    const file = hunkData[key];
+    if (!file) return;
+    const btn = t.closest('[data-hact]');
+    if (btn) {
+      const hi = +btn.dataset.h;
+      const h = file.hunks[hi];
+      const [act, sel] = btn.dataset.hact.split('-');
+      const lines = sel && hunkSel[key]?.hunk === hi ? [...hunkSel[key].lines].sort((a, b) => a - b) : undefined;
+      if (sel && !lines) return;
+      delete hunkSel[key];
+      return post('applyHunks', { path: view.dataset.path, staged, hunk: hi, lines, sig: hunkSig(h), action: act });
+    }
+    const row = t.closest('.dl');
+    if (!row || row.classList.contains('dlc')) return;
+    const hi = +row.dataset.h;
+    const li = +row.dataset.l;
+    let sel = hunkSel[key];
+    if (!sel || sel.hunk !== hi) sel = hunkSel[key] = { hunk: hi, sig: hunkSig(file.hunks[hi]), lines: new Set(), anchor: li };
+    if (e.shiftKey && sel.anchor !== undefined) {
+      const [a, b] = [Math.min(sel.anchor, li), Math.max(sel.anchor, li)];
+      file.hunks[hi].lines.forEach((l, i) => {
+        if (i >= a && i <= b && l.kind !== ' ') sel.lines.add(i);
+      });
+      window.getSelection()?.removeAllRanges();
+    } else {
+      if (!sel.lines.delete(li)) sel.lines.add(li);
+      sel.anchor = li;
+    }
+    view.innerHTML = hunkViewHtml(key, staged);
+  }
+
+  function toggleHunks(key) {
+    if (hunkOpen[key]) {
+      delete hunkOpen[key];
+      delete hunkSel[key];
+    } else {
+      hunkOpen[key] = true;
+      post('fileHunks', { path: key.slice(2), staged: key[0] === 's' });
+    }
+    renderDetails();
+  }
+
+  /** Re-requests the hunks of every expanded file; drops files that left the lists. Call after the working tree state changed. */
+  function refreshHunks() {
+    const d = S.details;
+    if (d?.kind !== 'wip') return;
+    const live = new Set();
+    for (const f of d.staged) if (f.status !== '!') live.add(hunkKey(true, f.path));
+    for (const f of d.unstaged) if (f.status !== 'U' && f.status !== '!') live.add(hunkKey(false, f.path));
+    for (const key of Object.keys(hunkOpen)) {
+      if (!live.has(key)) {
+        delete hunkOpen[key];
+        delete hunkData[key];
+        delete hunkSel[key];
+      } else post('fileHunks', { path: key.slice(2), staged: key[0] === 's' });
+    }
   }
 
   /** Staged / unstaged changes with a commit box. Keeps the draft message and caret across refreshes. */
@@ -706,7 +1008,11 @@
     el.innerHTML = `<div class="wip">
       <div class="commitbox">
         <div class="d-subject">Commit to ${esc(d.branch || 'detached HEAD')}</div>
-        <textarea id="commitMsg" placeholder="Message (${MOD}+Enter to commit)">${esc(S.commitMsg || '')}</textarea>
+        <div class="msgrow">
+          <textarea id="commitMsg" placeholder="Message (${MOD}+Enter to commit)">${esc(S.commitMsg || '')}</textarea>
+          ${S.aiAvailable || S.aiGen ? `<button class="icon-btn" data-ai="1" title="${S.aiGen ? 'Stop generating' : 'Generate commit message with a language model. Your diff is sent to the model provider (e.g. GitHub Copilot) only when you click this.'}">${ic(S.aiGen ? 'stop-circle' : 'sparkle')}</button>` : ''}
+        </div>
+        <div class="ai-error" id="aiError" hidden></div>
         <div class="opts">
           <label class="check" title="${canAmend ? 'Replace the last commit' : 'No commit yet'}"><input type="checkbox" id="amend" ${S.amend ? 'checked' : ''} ${canAmend ? '' : 'disabled'}> Amend last commit</label>
           <label class="check" title="git commit --no-verify"><input type="checkbox" id="noVerify" ${S.noVerify ? 'checked' : ''}> Skip hooks</label>
@@ -717,14 +1023,14 @@
         ${d.conflicts.length ? `<div class="grp-head conflict">Merge conflicts (${d.conflicts.length})</div>
           ${fileList(d.conflicts, d.headRef, null, [{ act: 'open', icon: 'go-to-file', title: 'Open file' }, { act: 'resolved', icon: 'check', title: 'Mark resolved (stage)' }])}` : ''}
         <div class="grp-head">Staged changes (${nStaged}) ${nStaged ? '<button class="link" data-wip="unstageAll">unstage all</button>' : ''}</div>
-        ${nStaged ? fileList(d.staged, d.headRef, 'INDEX', [{ act: 'unstage', icon: 'remove', title: 'Unstage' }]) : '<div class="empty">Nothing staged.</div>'}
+        ${nStaged ? fileList(d.staged, d.headRef, 'INDEX', [{ act: 'unstage', icon: 'remove', title: 'Unstage' }], 'staged') : '<div class="empty">Nothing staged.</div>'}
         <div class="grp-head">Changes (${nUnstaged}) ${nUnstaged ? '<button class="link" data-wip="stageAll">stage all</button> <button class="link danger" data-wip="discardAll">discard all…</button>' : ''}</div>
         ${nUnstaged
           ? fileList(d.unstaged, 'INDEX', null, [
               { act: 'open', icon: 'go-to-file', title: 'Open file', when: f => f.status !== 'D' },
               { act: 'discard', icon: 'discard', title: 'Discard changes' },
               { act: 'stage', icon: 'add', title: 'Stage' },
-            ])
+            ], 'unstaged')
           : '<div class="empty">Working tree clean.</div>'}
       </div></div>`;
     const box = $('#commitMsg');
@@ -735,6 +1041,37 @@
       box.focus();
       S.focusCommit = false;
     }
+  }
+
+  /**
+   * Shows generated text in the commit box (and S.commitMsg, so the draft survives refreshes).
+   * An empty box is replaced; a box with a draft keeps it and gets the generated text below a separator line.
+   */
+  const AI_SEP = '\n\n--- generated ---\n';
+  function setGeneratedMessage(text) {
+    const base = S.aiBase || '';
+    S.commitMsg = base.trim() ? base + AI_SEP + text : text;
+    const ta = $('#commitMsg');
+    if (ta) {
+      ta.value = S.commitMsg;
+      ta.scrollTop = ta.scrollHeight;
+    }
+  }
+
+  function showAiError() {
+    const el = $('#aiError');
+    if (!el) return;
+    el.hidden = !S.aiError;
+    el.textContent = S.aiError || '';
+    S.aiError = null;
+  }
+
+  function toggleGenerate() {
+    if (S.aiGen) return post('cancelCommitMessage');
+    S.aiGen = { text: '', base: S.commitMsg || '' };
+    S.aiBase = S.aiGen.base;
+    post('generateCommitMessage');
+    renderDetails();
   }
 
   function commitNow() {
@@ -752,6 +1089,15 @@
   }
 
   /** Message, metadata, checks and files of one commit. Used inline in the graph and in the pane. */
+  /** Badge for a signed commit's verification state; unsigned commits show nothing. */
+  function signatureBadge(sig) {
+    if (!sig || sig.state === 'none') return '';
+    const icon = { good: 'verified-filled', bad: 'error', unknown: 'unverified', expired: 'warning', revoked: 'warning', error: 'question' }[sig.state] || 'question';
+    const tip = [sig.label, sig.signer && `Signer: ${sig.signer}`, sig.key && `Key: ${sig.key}`].filter(Boolean).join('\n');
+    const text = sig.state === 'good' ? 'Verified' : sig.state === 'unknown' ? 'Unverified' : sig.state === 'error' ? "Can't verify" : sig.label;
+    return ` <span class="sig sig-${esc(sig.state)}" title="${esc(tip)}">${ic(icon, 'sm')}${esc(text)}</span>`;
+  }
+
   function commitHtml(d) {
     const c = d.commit;
     const [subject, ...rest] = c.message.split('\n');
@@ -763,7 +1109,7 @@
       ${body ? `<div class="d-body ${S.rawBody ? 'raw' : 'md'} ${long && !S.bodyExpanded ? 'clamped' : ''}">${S.rawBody ? esc(body) : renderMarkdown(body)}</div>
         ${long ? `<button class="link more" data-bodytoggle="1">${S.bodyExpanded ? 'Show less' : 'Show more'}</button>` : ''}` : ''}
       <div class="d-meta">
-        <span>${esc(c.author)} &lt;${esc(c.email)}&gt; · ${absDate(c.date)}</span>
+        <span>${esc(c.author)} &lt;${esc(c.email)}&gt; · ${absDate(c.date)}${signatureBadge(c.signature)}</span>
         ${c.committer !== c.author ? `<span>committed by ${esc(c.committer)} · ${absDate(c.commitDate)}</span>` : ''}
         <span><code>${c.hash}</code> <button class="link" data-copy="${c.hash}">copy</button></span>
         <span>parents: ${c.parents.map(p => `<button class="link" data-goto="${p}">${p.slice(0, 7)}</button>`).join(' ') || 'none'}</span>
@@ -973,6 +1319,8 @@
         { label: 'Pull --rebase --autostash', icon: 'repo-pull', run: () => post('pull', { mode: 'autostash' }) },
         { label: 'Pull --ff-only', icon: 'repo-pull', run: () => post('pull', { mode: 'ff' }) },
         { label: 'Pull --no-rebase (merge)', icon: 'repo-pull', run: () => post('pull', { mode: 'merge' }) },
+        '-',
+        { label: 'Pull --force (reset to upstream)…', icon: 'warning', run: () => post('pull', { mode: 'force' }) },
       ];
     }
     if (cmd === 'push') {
@@ -1008,6 +1356,8 @@
         { label: 'Stash including untracked…', icon: 'archive', run: () => post('stashSave', { mode: 'untracked' }) },
         { label: 'Stash staged changes only…', icon: 'archive', run: () => post('stashSave', { mode: 'staged' }) },
         { label: 'Stash, keep index…', icon: 'archive', run: () => post('stashSave', { mode: 'keepIndex' }) },
+        '-',
+        { label: 'Apply patch…', icon: 'file-code', run: () => post('applyPatch') },
       ];
     }
     return null;
@@ -1021,8 +1371,12 @@
       { label: `Cherry-pick ${list.length} commits onto ${cur}`, icon: 'git-commit', run: () => post('cherryPickMany', { shas: list }) },
       { label: `Revert ${list.length} commits`, icon: 'discard', run: () => post('revertMany', { shas: list }) },
       { label: 'Compare oldest ↔ newest', icon: 'git-compare', run: () => compare(list[0], list[list.length - 1]) },
+      ...(list.length === 2 && !S.data.bisect?.active
+        ? [{ label: 'Bisect between these (older = good, newer = bad)', icon: 'search', run: () => post('bisectStart', { good: list[0], bad: list[1] }) }]
+        : []),
       '-',
       { label: 'Copy SHAs', icon: 'copy', run: () => post('copy', { text: list.join('\n') }) },
+      { label: 'Save as patch files…', icon: 'save', run: () => post('savePatches', { shas: list }) },
     ];
   }
 
@@ -1043,6 +1397,7 @@
       { label: 'Create worktree here…', icon: 'multiple-windows', run: () => post('addWorktree', { ref: c.hash }) },
       { label: 'Checkout (detached)', icon: 'check', run: () => post('checkout', { kind: 'commit', name: c.hash }) },
       { label: 'Tag…', icon: 'tag', run: () => post('tag', { sha: c.hash }) },
+      { label: 'Create release tag here…', icon: 'rocket', run: () => post('releaseTag', { sha: c.hash }) },
       '-',
       { label: `Merge into ${cur}…`, icon: 'git-merge', run: () => post('merge', { ref: c.hash }) },
       { label: `Rebase ${cur} onto here…`, icon: 'git-commit', run: () => post('rebase', { onto: c.hash }) },
@@ -1060,8 +1415,35 @@
       { label: 'Compare with HEAD', icon: 'git-compare', run: () => compare(c.hash, 'HEAD') },
       { label: 'Compare with working tree', icon: 'git-compare', run: () => compare(c.hash, null) },
       '-',
+      ...(S.data.bisect?.active
+        ? [
+            { label: 'Bisect: mark good', icon: 'pass-filled', run: () => post('bisectMark', { verdict: 'good', sha: c.hash }) },
+            { label: 'Bisect: mark bad', icon: 'error', run: () => post('bisectMark', { verdict: 'bad', sha: c.hash }) },
+            { label: 'Bisect: skip', icon: 'skip', run: () => post('bisectMark', { verdict: 'skip', sha: c.hash }) },
+          ]
+        : [
+            { label: 'Bisect: mark as good (HEAD is bad)', icon: 'pass-filled', run: () => post('bisectStart', { good: c.hash }) },
+            { label: 'Bisect: mark as bad…', icon: 'error', run: () => post('bisectStart', { bad: c.hash }) },
+          ]),
+      '-',
       { label: 'Copy SHA', icon: 'copy', run: () => post('copy', { text: c.hash }) },
+      { label: 'Copy short SHA', icon: 'copy', run: () => post('copy', { text: s }) },
       { label: 'Copy subject', icon: 'copy', run: () => post('copy', { text: c.subject }) },
+      { label: 'Copy full message', icon: 'copy', run: () => post('copyMessage', { sha: c.hash }) },
+      ...(S.integration
+        ? [
+            '-',
+            { label: `Open commit on ${PROVIDER[S.integration.provider].name}`, icon: PROVIDER[S.integration.provider].icon, run: () => post('hostLink', { what: 'commit', action: 'open', sha: c.hash }) },
+            { label: 'Copy link to commit', icon: 'link', run: () => post('hostLink', { what: 'commit', action: 'copy', sha: c.hash }) },
+          ]
+        : []),
+      ...(isMerge
+        ? []
+        : [
+            '-',
+            { label: 'Copy as patch', icon: 'file-code', run: () => post('copyPatch', { sha: c.hash }) },
+            { label: 'Save as patch…', icon: 'save', run: () => post('savePatch', { sha: c.hash }) },
+          ]),
     ];
   }
 
@@ -1088,6 +1470,12 @@
         { label: 'Force push (lease + if-includes)…', danger: true, icon: 'repo-push', run: () => post('pushBranch', { name, force: 'safe' }) },
         { label: 'Force push (lease only)…', danger: true, icon: 'repo-push', run: () => post('pushBranch', { name, force: 'lease' }) },
         { label: 'Force push (unconditional --force)…', danger: true, icon: 'repo-push', run: () => post('pushBranch', { name, force: 'force' }) },
+        ...(S.integration?.signedIn && b && !prsForBranch('local', b).length
+          ? [{ label: 'Create pull request…', icon: 'git-pull-request', run: () => post('createPr', { name }) }]
+          : []),
+        ...(S.integration && b?.upstream?.startsWith(`${S.integration.remote}/`) && !b.gone && !prsForBranch('local', b).length
+          ? [{ label: 'Create pull request in browser…', icon: 'git-pull-request', run: () => post('createPrInBrowser', { name }) }]
+          : []),
         ...(b?.upstream && !b.gone ? [{ label: `Fast-forward from ${b.upstream}`, icon: 'repo-pull', run: () => post('updateBranch', { name }) }] : []),
         { label: b?.upstream ? 'Change upstream…' : 'Set upstream…', icon: 'cloud', run: () => post('setUpstream', { name }) },
         ...(b?.upstream ? [{ label: 'Unset upstream', icon: 'cloud', run: () => post('unsetUpstream', { name }) }] : []),
@@ -1124,6 +1512,7 @@
         { label: `Merge into ${cur}…`, icon: 'git-merge', run: () => post('merge', { ref: name }) },
         { label: `Compare with ${cur}`, icon: 'git-compare', run: () => compare(name, 'HEAD') },
         '-',
+        { label: 'Changelog since this tag', icon: 'list-flat', run: () => post('changelog', { from: name, to: 'HEAD' }) },
         { label: 'Push tag', icon: 'repo-push', run: () => post('pushTag', { name }) },
         { label: 'Copy name', icon: 'copy', run: () => post('copy', { text: name }) },
         '-',
@@ -1170,6 +1559,20 @@
             ]),
       ];
     }
+    if (kind === 'submodule') {
+      const p = { path: ds.path };
+      return [
+        { header: ds.path },
+        { label: 'Open in gitSt8', icon: 'repo', run: () => post('openSubmodule', p) },
+        { label: 'Open in new window', icon: 'multiple-windows', run: () => post('openSubmoduleWindow', p) },
+        { label: 'Reveal in file explorer', icon: 'go-to-file', run: () => post('revealSubmodule', p) },
+        { label: 'Copy path', icon: 'copy', run: () => post('copy', { text: ds.path }) },
+        '-',
+        { label: ds.state === 'uninitialized' ? 'Initialize & update' : 'Update to recorded commit', icon: 'cloud-download', run: () => post('submoduleUpdate', p) },
+        { label: 'Sync URL', icon: 'sync', run: () => post('submoduleSync', p) },
+      ];
+    }
+    if (kind === 'lfs') return sectionMenu('lfs');
     return [];
   }
 
@@ -1215,6 +1618,9 @@
           { label: d.tagSync ? `Re-compare with ${d.tagSync.remote}` : 'Compare with remote…', icon: 'sync', run: () => post('tagSync', d.tagSync ? { remote: d.tagSync.remote } : {}) },
           ...(d.tagSync ? [{ label: 'Hide comparison', icon: 'close', run: () => post('clearTagSync') }] : []),
           '-',
+          { label: 'Create release tag…', icon: 'rocket', run: () => post('releaseTag', { sha: 'HEAD' }) },
+          { label: 'Generate changelog…', icon: 'list-flat', run: () => post('changelog') },
+          '-',
           { label: 'Fetch tags…', icon: 'sync', run: () => post('fetchTags') },
           { label: 'Push all tags…', icon: 'repo-push', run: () => post('pushAllTags') },
           '-',
@@ -1225,8 +1631,21 @@
           { label: 'Add worktree…', icon: 'multiple-windows', run: () => post('addWorktree') },
           { label: 'Prune stale worktrees', icon: 'sync', run: () => post('pruneWorktrees') },
         ];
+      case 'submodules':
+        return [
+          { label: 'Update all (init, recursive)', icon: 'cloud-download', run: () => post('submoduleUpdate') },
+          { label: 'Sync all URLs', icon: 'sync', run: () => post('submoduleSync') },
+        ];
+      case 'lfs':
+        return [
+          { label: 'Pull LFS files', icon: 'repo-pull', run: () => post('lfsPull') },
+          { label: 'Fetch LFS files', icon: 'cloud-download', run: () => post('lfsFetch') },
+        ];
       case 'stashes':
-        return [{ label: 'Stash changes…', icon: 'archive', run: () => post('stashSave') }];
+        return [
+          { label: 'Stash changes…', icon: 'archive', run: () => post('stashSave') },
+          { label: 'Apply patch…', icon: 'file-code', run: () => post('applyPatch') },
+        ];
     }
     return [];
   }
@@ -1239,7 +1658,14 @@
       ...(ds.status !== 'D' ? [{ label: 'Open file', icon: 'go-to-file', run: () => post('openFile', { path: ds.path }) }] : []),
       { label: 'File history', icon: 'history', run: () => post('fileHistory', { path: ds.path }) },
       { label: 'Copy path', icon: 'copy', run: () => post('copy', { text: ds.path }) },
-      ...(wip && ds.status !== 'D' ? ignoreItems(ds.path) : []),
+      ...(S.integration && !wip && ds.status !== 'D' && /^[0-9a-f]{40}$/.test(ds.right || '')
+        ? [
+            '-',
+            { label: `Open file on ${PROVIDER[S.integration.provider].name}`, icon: PROVIDER[S.integration.provider].icon, run: () => post('hostLink', { what: 'file', action: 'open', sha: ds.right, path: ds.path }) },
+            { label: 'Copy permalink', icon: 'link', run: () => post('hostLink', { what: 'file', action: 'copy', sha: ds.right, path: ds.path }) },
+          ]
+        : []),
+      ...(wip &&ds.status !== 'D' ? ignoreItems(ds.path) : []),
     ];
   }
 
@@ -1427,10 +1853,17 @@
       return showMenu(r.left, r.bottom, sectionMenu(secMenu.dataset.secmenu));
     }
 
+    const bisBtn = t.closest('[data-bisect]');
+    if (bisBtn) {
+      const v = bisBtn.dataset.bisect;
+      return v === 'show' ? reveal(bisBtn.dataset.sha) : post('bisectMark', { verdict: v });
+    }
+
     const cmdBtn = t.closest('[data-cmd]');
     if (cmdBtn) return cmdBtn.dataset.cmd === 'openCommit' ? openCommit() : post(cmdBtn.dataset.cmd);
 
     if (t.closest('[data-commit]')) return commitNow();
+    if (t.closest('[data-ai]')) return toggleGenerate();
     const wipBtn = t.closest('[data-wip]');
     if (wipBtn && S.details?.kind === 'wip') {
       const d = S.details;
@@ -1442,6 +1875,14 @@
         return;
       }
       return post(wipBtn.dataset.wip);
+    }
+    const hunkView = t.closest('.hunkview');
+    if (hunkView) return hunkClick(e, hunkView);
+    const hunkToggle = t.closest('[data-hunktoggle]');
+    if (hunkToggle) {
+      const li = hunkToggle.closest('li');
+      const key = hunkKey(hunkToggle.dataset.hunktoggle === 's', li.dataset.path);
+      return toggleHunks(key);
     }
     const fileAct = t.closest('[data-fileact]');
     if (fileAct) {
@@ -1455,6 +1896,23 @@
     }
 
     if (t.closest('[data-clearquery]')) return post('search', {});
+    if (t.closest('[data-clearfilter]')) return post('setFilter', { filter: null });
+    const rmFilter = t.closest('[data-rmfilter]');
+    if (rmFilter) {
+      const next = { ...S.data.filter };
+      delete next[rmFilter.dataset.rmfilter];
+      return post('setFilter', { filter: next });
+    }
+    if (t.closest('#filterBtn')) {
+      S.filterOpen = !S.filterOpen;
+      return renderQueryBar();
+    }
+    if (t.closest('#ff_close')) {
+      S.filterOpen = false;
+      return renderQueryBar();
+    }
+    if (t.closest('#ff_apply')) return applyFilterForm();
+    if (t.closest('#ff_refs')) return post('pickFilterRefs', { current: S.filterRefs || [] });
 
     const act = t.closest('[data-act]');
     if (act) return post(act.dataset.act, { path: act.dataset.path, side: act.dataset.side });
@@ -1533,6 +1991,7 @@
     const item = e.target.closest('.item');
     if (item?.dataset.ref === 'local') post('checkout', { kind: 'local', name: item.dataset.name });
     if (item?.dataset.ref === 'remote') post('checkout', { kind: 'remote', name: item.dataset.name, branch: item.dataset.branch });
+    if (item?.dataset.ref === 'submodule' && item.dataset.state !== 'uninitialized') post('openSubmodule', { path: item.dataset.path });
     if (item?.dataset.ref === 'worktree' && normPath(item.dataset.path) !== normPath(S.data.root)) post('openWorktree', { path: item.dataset.path, newWindow: true });
     const badge = e.target.closest('.badge');
     if (badge?.dataset.badge === 'local') post('checkout', { kind: 'local', name: badge.dataset.name });
@@ -1554,7 +2013,7 @@
     else if (prEl) items = prMenu(prEl.dataset.pr);
     else if (ciEl) items = ciMenu(ciEl.dataset.ci);
     else if (t.closest('#integration') && S.integration?.signedIn) items = integrationMenu();
-    else if (badge && badge.dataset.badge !== 'head') items = refMenu(badge.dataset.badge, badge.dataset);
+    else if (badge && badge.dataset.badge !== 'head' && badge.dataset.badge !== 'bisect') items = refMenu(badge.dataset.badge, badge.dataset);
     else if (item) items = refMenu(item.dataset.ref, item.dataset);
     else if (group) items = remoteMenu(group.dataset.remotegroup);
     else if (secHead) items = sectionMenu(secHead.parentElement.dataset.section);
@@ -1626,6 +2085,14 @@
   filterInput.addEventListener('input', e => {
     S.filter = e.target.value;
     applyFilter();
+  });
+  document.addEventListener('keydown', e => {
+    if (!e.target.closest?.('#filterForm')) return;
+    if (e.key === 'Enter' && e.target.tagName === 'INPUT' && e.target.type === 'text') applyFilterForm();
+    else if (e.key === 'Escape') {
+      S.filterOpen = false;
+      renderQueryBar();
+    }
   });
   filterInput.addEventListener('keydown', e => {
     if (e.key !== 'Enter') return;
