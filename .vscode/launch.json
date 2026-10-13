@@ -2,12 +2,28 @@
   "version": "0.2.0",
   "configurations": [
     {
+      // Opens this repository directly. Opening a folder later restarts the extension host, which hits the
+      // intermittent dev-host crash (exit 134), so always pass the folder at launch.
       "name": "Run gitSt8",
       "type": "extensionHost",
       "request": "launch",
       "args": [
         "--extensionDevelopmentPath=${workspaceFolder}",
-        "--profile-temp"
+        "--profile-temp",
+        "${workspaceFolder}"
+      ],
+      "trace": true,
+      "outFiles": ["${workspaceFolder}/out/**/*.js"],
+      "preLaunchTask": "npm: watch"
+    },
+    {
+      "name": "Run gitSt8 on folder…",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": [
+        "--extensionDevelopmentPath=${workspaceFolder}",
+        "--profile-temp",
+        "${input:devHostFolder}"
       ],
       "trace": true,
       "outFiles": ["${workspaceFolder}/out/**/*.js"],
@@ -22,6 +38,13 @@
       ],
       "outFiles": ["${workspaceFolder}/out/**/*.js"],
       "preLaunchTask": "npm: watch"
+    }
+  ],
+  "inputs": [
+    {
+      "id": "devHostFolder",
+      "type": "promptString",
+      "description": "Folder (git repository) to open in the dev host"
     }
   ]
 }

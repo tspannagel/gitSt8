@@ -363,7 +363,7 @@ When a remote points at GitHub, GitHub Enterprise or Azure DevOps, gitSt8 shows 
 **Sign-in.** gitSt8 uses the accounts VS Code already manages. Nothing is stored by gitSt8 itself.
 
 - **GitHub**: the built-in GitHub account (scope `repo`). For GitHub Enterprise, set `github-enterprise.uri`.
-- **Azure DevOps**: your Microsoft (Entra ID) account. If your organization blocks that, or you use an MSA-backed organization, use a personal access token with *Code (read)* and *Build (read)* scopes: **gitSt8: Set Azure DevOps Personal Access Token**. Tokens live in VS Code's secret storage, either for all organizations or for one.
+- **Azure DevOps**: your Microsoft (Entra ID) account. gitSt8 asks the organization which Entra tenant backs it and requests the token from that tenant, so guest accounts work too. **Sign in** lets you pick the account even if VS Code already remembers a different one. If your organization blocks that, or you use an MSA-backed organization, use a personal access token with *Code (read)* and *Build (read)* scopes: **gitSt8: Set Azure DevOps Personal Access Token**. Tokens live in VS Code's secret storage, either for all organizations or for one.
 
 **Create a pull request.** Right-click a local branch without an open PR and choose *Create pull request…*. If the branch is not on the integration remote yet, or is ahead of it, you are asked to push first. Then pick the target branch (default: the stack base), edit the title (the commit subject when there is exactly one commit, else the humanized branch name), and choose *Create* or *Create as draft*. The description is a bullet list of the commit subjects. Nothing is sent until you confirm the last step; afterwards a notification offers *Open in Browser*.
 
@@ -461,7 +461,7 @@ Then click **Continue**, or **Skip commit** (rebase / cherry-pick / revert), or 
 | A commit from the editor isn't in the graph | It is not reachable from any branch shown. Enable **All branches**, or find it in the **Reflog**. Commits older than the newest 5,000 are not loaded into the graph; their details open in the details pane instead of inline |
 | The view looks out of date after switching back to it | gitSt8 skips refreshes while its view is hidden and catches up when it becomes visible again. Press `F5` in the view to force a refresh |
 | `DEP0169 url.parse()` warning in the Debug Console | Comes from VS Code itself, not gitSt8. Harmless |
-| Integration chip says *Sign in* although you are signed in | The account may lack access to that organization or repository. On Azure DevOps, try a personal access token. Hover the chip for the exact error |
+| Integration chip says *Sign in* although you are signed in | The account may lack access to that organization or repository. Click **Sign in** and pick another account; hover the chip for the exact error and the account used. On Azure DevOps, a stored personal access token takes precedence over the Microsoft account, so clear a stale one with **gitSt8: Remove Azure DevOps Personal Access Token**, or try a token instead |
 | No CI icons on Azure DevOps | Status comes from the newest 200 pipeline runs of the repository. Older commits show nothing |
 
 ---

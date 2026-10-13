@@ -14,6 +14,14 @@ test('rollup: worst state wins', () => {
   assert.equal(rollup(['skipped', 'skipped']), 'skipped');
 });
 
+test('Azure DevOps: resource tenant header', () => {
+  assert.equal(ado.tenantFromHeader('27444538-CF50-4827-91c3-1261e1728f12'), '27444538-cf50-4827-91c3-1261e1728f12');
+  assert.equal(ado.tenantFromHeader('27444538-cf50-4827-91c3-1261e1728f12, 11111111-1111-1111-1111-111111111111'), '27444538-cf50-4827-91c3-1261e1728f12');
+  assert.equal(ado.tenantFromHeader('00000000-0000-0000-0000-000000000000'), undefined);
+  assert.equal(ado.tenantFromHeader('not-a-guid'), undefined);
+  assert.equal(ado.tenantFromHeader(null), undefined);
+});
+
 test('GitHub: check runs and status contexts map to states', () => {
   assert.equal(gh.checkRunState('IN_PROGRESS', null), 'pending');
   assert.equal(gh.checkRunState('QUEUED', null), 'pending');

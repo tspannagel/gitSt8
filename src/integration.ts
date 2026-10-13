@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { RemoteInfo } from './git';
-import { AZURE_DEVOPS_SCOPE, AzureDevOpsClient } from './providers/azure';
+import { AZURE_DEVOPS_SCOPE, AzureDevOpsClient, resourceTenant } from './providers/azure';
 import { parseRemoteUrl, repoLabel } from './providers/detect';
 import { GitHubClient } from './providers/github';
 import { AuthError, CiStatus, NewPullRequest, ProviderClient, ProviderId, PullRequest, RepoRef } from './providers/types';
@@ -43,6 +43,10 @@ export class Integrations {
   private readonly prCache = new Map<string, Cached<PullRequest[]>>();
   /** Providers the user explicitly asked to sign in to during this load. */
   private interactive = new Set<ProviderId>();
+  /** Entra tenant per Azure DevOps organization (undefined: Microsoft-account org or unknown). */
+  private readonly tenants = new Map<string, string | undefined>();
+  /** Microsoft account used for the last Azure DevOps token, to name it when the service refuses it. */
+  private azureAccount?: string;
   private readonly changed = new vscode.EventEmitter<void>();
   readonly onDidChange = this.changed.event;
   private readonly disposables: vscode.Disposable[] = [this.changed];
@@ -99,11 +103,32 @@ export class Integrations {
 
   private async azureAuth(repo: RepoRef, interactive: boolean): Promise<string> {
     const pat = (await this.secrets.get(`${PAT_KEY}:${repo.owner.toLowerCase()}`)) || (await this.secrets.get(PAT_KEY));
-    if (pat) return `Basic ${Buffer.from(`:${pat}`).toString('base64')}`;
+    if (pat) {
+      this.azureAccount = undefined;
+      return `Basic ${Buffer.from(`:${pat}`).toString('base64')}`;
+    }
     const ask = interactive || this.interactive.has('azure');
-    const session = await vscode.authentication.getSession('microsoft', [AZURE_DEVOPS_SCOPE], ask ? { createIfNone: true } : { silent: true });
+    const tenant = await this.azureTenant(repo.owner);
+    const scopes = [AZURE_DEVOPS_SCOPE, ...(tenant ? [`VSCODE_TENANT:${tenant}`] : [])];
+    // On an explicit sign-in, let the user pick the account instead of silently reusing the remembered one,
+    // which may be the wrong account and would make the button appear to do nothing.
+    const session = await vscode.authentication.getSession('microsoft', scopes, ask ? { createIfNone: true, clearSessionPreference: true } : { silent: true });
+    this.azureAccount = session?.account.label;
     if (!session) throw new AuthError('Not signed in to Azure DevOps.');
     return `Bearer ${session.accessToken}`;
+  }
+
+  /** Entra tenant of an Azure DevOps organization, looked up once. Lookup failures are retried on the next load. */
+  private async azureTenant(org: string): Promise<string | undefined> {
+    const key = org.toLowerCase();
+    if (this.tenants.has(key)) return this.tenants.get(key);
+    try {
+      const tenant = await resourceTenant(org);
+      this.tenants.set(key, tenant);
+      return tenant;
+    } catch {
+      return undefined;
+    }
   }
 
   async signIn(provider: ProviderId): Promise<void> {
@@ -204,7 +229,8 @@ export class Integrations {
     } catch (e) {
       if (e instanceof AuthError) {
         state.signedIn = false;
-        state.error = this.interactive.has(repo.provider) ? e.message : `Sign in to ${providerName(repo.provider)} to see pull requests and pipeline status.`;
+        const account = repo.provider === 'azure' && this.azureAccount ? ` Signed in as ${this.azureAccount}; this account may have no access to '${repo.owner}'.` : '';
+        state.error = this.interactive.has(repo.provider) ? e.message + account : `Sign in to ${providerName(repo.provider)} to see pull requests and pipeline status.`;
       } else {
         state.error = e instanceof Error ? e.message : String(e);
       }

@@ -5,6 +5,29 @@ import { AuthError, AuthHeader, NewPullRequest, CiCheck, CiState, CiStatus, Prov
 /** Azure DevOps resource id, used as the OAuth scope for Microsoft sign-in. */
 export const AZURE_DEVOPS_SCOPE = '499b84ac-1321-427f-aa17-267ca6975798/.default';
 const API_VERSION = '7.1';
+const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Entra tenant from an `X-VSS-ResourceTenant` header. Undefined for a missing/invalid value
+ * and for the all-zero id that Microsoft-account-backed organizations report.
+ */
+export function tenantFromHeader(value: string | null | undefined): string | undefined {
+  const first = (value || '').split(',')[0].trim();
+  return GUID.test(first) && !/^[0-]+$/.test(first) ? first.toLowerCase() : undefined;
+}
+
+/**
+ * Asks Azure DevOps which Entra tenant backs `org`. Works without credentials: every response carries the header.
+ * A token from another tenant (e.g. a guest's home tenant) is rejected, so sign-in must target this one.
+ */
+export async function resourceTenant(org: string): Promise<string | undefined> {
+  const res = await fetch(`https://dev.azure.com/${encodeURIComponent(org)}/_apis/connectionData`, {
+    method: 'HEAD',
+    headers: { 'User-Agent': 'gitSt8-vscode' },
+    signal: AbortSignal.timeout(10_000),
+  });
+  return tenantFromHeader(res.headers.get('x-vss-resourcetenant'));
+}
 
 interface AdoRepository {
   id: string;
