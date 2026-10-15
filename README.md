@@ -183,13 +183,13 @@ The search box has several modes:
 
 | Mode | Finds commits… |
 | --- | --- |
-| **Filter loaded** (default) | Dims non-matching rows among the commits already loaded, as you type. Press `Enter` to search all history instead |
+| **Filter loaded** (default) | Dims non-matching rows among the commits already loaded, as you type. Matches message, author, hash and changed file names/paths. Press `Enter` to search all history instead |
 | **Message, author or file name** | Matching any of the three |
 | **Message** | Whose message matches (regex, case-insensitive) |
 | **Author** | By author name or email |
 | **Code added/removed** | That add or remove an exact string (`git log -S`) |
 | **Diff matches regex** | Whose changed lines match a regex (`git log -G`) |
-| **File / folder** | That touch a file or folder. Part of a name (`panel`) matches any file or folder containing it, at any depth. An exact path shows that file's history and follows renames |
+| **File / folder** | That touch a file or folder. Part of a name (`panel`) matches any file or folder containing it, at any depth. An exact path shows that file's history and follows renames. `\` and `/` both work as separators |
 
 The **Filter** button (funnel icon) in the toolbar opens a form above the graph. Filters combine with each other and with the search above (all of them must match):
 

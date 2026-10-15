@@ -4,7 +4,7 @@ import * as cp from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { GitCli, appendIgnore, ignorePattern, splitRemoteRef } from '../git';
+import { GitCli, appendIgnore, ignorePattern, nameSpecs, splitRemoteRef } from '../git';
 import { layout } from '../graph';
 
 // Integration tests against a real throwaway repository with a bare "remote".
@@ -129,6 +129,11 @@ test('appendIgnore skips existing lines and keeps line endings', () => {
   assert.equal(appendIgnore('/a\n', ['/a']), null);
 });
 
+test('nameSpecs normalizes separators and escapes glob characters', () => {
+  assert.deepEqual(nameSpecs('./src\\a[1]'), [':(glob,icase)**/*src/a\\[1\\]*', ':(glob,icase)**/*src/a\\[1\\]*/**']);
+  assert.deepEqual(nameSpecs(' '), []);
+});
+
 test('splitRemoteRef prefers the longest remote name', () => {
   assert.deepEqual(splitRemoteRef('origin/feature/x', ['origin']), { remote: 'origin', branch: 'feature/x' });
   assert.deepEqual(splitRemoteRef('team/a/b', ['team', 'team/a']), { remote: 'team/a', branch: 'b' });
@@ -152,6 +157,15 @@ test('search: file names, folders, exact paths, any, message, pickaxe', async ()
   assert.ok((await q('any', 'tester')).commits.length >= 6);
   assert.deepEqual(subjects(await q('message', 'S1 A')), ['s1 a']);
   assert.deepEqual(subjects(await q('pickaxe', 's2 a')), ['s2 a']);
+});
+
+test('search: backslash paths and commitsTouching for the live filter', async () => {
+  assert.deepEqual(subjects(await git.log({ limit: 50, all: true, query: { kind: 'path', value: 'src\\panelV' } })), ['add panel view']);
+  const all = (await git.log({ limit: 50, all: true })).commits.map(c => c.hash);
+  const hits = await git.commitsTouching([...all, 'WIP'], 'panelview');
+  assert.equal(hits.length, 1);
+  assert.equal((await git.log({ limit: 50, all: true, query: { kind: 'path', value: 'panelview' } })).commits[0].hash, hits[0]);
+  assert.deepEqual(await git.commitsTouching(all, '   '), []);
 });
 
 test('search results draw as one lane', async () => {

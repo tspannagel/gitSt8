@@ -222,9 +222,7 @@ export class GitCli {
             if (!query.isDir) args.push('--follow');
             pathspec = [query.value];
           } else {
-            // Any file or folder whose name contains the text, at any depth.
-            const v = query.value.replace(/[\\*?[\]]/g, '\\$&');
-            pathspec = [`:(glob,icase)**/*${v}*`, `:(glob,icase)**/*${v}*/**`];
+            pathspec = nameSpecs(query.value);
           }
           break;
         case 'message':
@@ -266,6 +264,15 @@ export class GitCli {
     const hasMore = commits.length > limit;
     if (hasMore) commits.length = limit;
     return { commits, hasMore };
+  }
+
+  /** The subset of `hashes` that change a file or folder whose path contains `name` (see `nameSpecs`). */
+  async commitsTouching(hashes: string[], name: string): Promise<string[]> {
+    const shas = hashes.filter(h => /^[0-9a-f]{40}$/.test(h));
+    const specs = nameSpecs(name);
+    if (!shas.length || !specs.length) return [];
+    const out = await this.run(['log', '--no-walk=unsorted', '--stdin', '--format=%H', '--', ...specs], { input: shas.join('\n') + '\n' }).catch(() => '');
+    return out.split('\n').map(s => s.trim()).filter(Boolean);
   }
 
   async head(): Promise<Head> {
@@ -705,6 +712,12 @@ export function appendIgnore(content: string, patterns: string[]): string | null
   const eol = content.includes('\r\n') ? '\r\n' : '\n';
   const sep = content && !content.endsWith('\n') ? eol : '';
   return content + sep + add.join(eol) + eol;
+}
+
+/** Pathspecs for any file or folder whose path contains `text`, at any depth, ignoring case. Accepts `\` separators. */
+export function nameSpecs(text: string): string[] {
+  const v = text.trim().replace(/\\/g, '/').replace(/^\.?\/+/, '').replace(/[*?[\]]/g, '\\$&');
+  return v ? [`:(glob,icase)**/*${v}*`, `:(glob,icase)**/*${v}*/**`] : [];
 }
 
 function parseRecords(out: string): string[][] {

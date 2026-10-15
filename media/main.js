@@ -42,6 +42,7 @@
     details: null, // details pane: the commit box by default, or stash / compare / reflog / multi
     inline: null, // commit details shown in the graph, under the selected row
     filter: '',
+    fileHits: null, // {value, hashes: Set}: loaded commits that change a file whose path contains the filter text
     sideFilter: '',
     highlight: null, // file name/path to highlight in file lists
     collapsed: saved.collapsed || { tags: true, worktrees: false },
@@ -84,6 +85,12 @@
           renderDetails();
         }
         refreshHunks();
+        requestFileHits(); // the loaded commits may have changed
+        break;
+      case 'fileMatches':
+        if (m.value !== S.filter.trim()) break; // stale: the text changed meanwhile
+        S.fileHits = { value: m.value, hashes: new Set(m.hashes) };
+        applyFilter();
         break;
       case 'hunks': {
         const key = hunkKey(m.staged, m.path);
@@ -860,11 +867,21 @@
     const f = S.filter.trim().toLowerCase();
     if (!S.data?.commits) return;
     const searching = $('#searchKind').value !== '';
+    const files = S.fileHits?.value === S.filter.trim() ? S.fileHits.hashes : null;
     for (const tr of document.querySelectorAll('#graph tr[data-sha]')) {
       const c = S.data.commits[tr.dataset.i];
-      const hit = searching || !f || c.subject.toLowerCase().includes(f) || (c.author || '').toLowerCase().includes(f) || c.hash.startsWith(f);
+      const hit = searching || !f || c.subject.toLowerCase().includes(f) || (c.author || '').toLowerCase().includes(f) || c.hash.startsWith(f) || !!files?.has(c.hash);
       tr.classList.toggle('dim', !hit);
     }
+  }
+
+  /** "Filter loaded" also matches file names; the extension answers with `fileMatches`. Debounced while typing. */
+  let fileHitsTimer;
+  function requestFileHits(delay = 0) {
+    clearTimeout(fileHitsTimer);
+    const value = S.filter.trim();
+    if (!value || $('#searchKind').value !== '' || !S.data?.commits?.length) return;
+    fileHitsTimer = setTimeout(() => post('matchFiles', { value }), delay);
   }
 
   // ---- details
@@ -2067,7 +2084,7 @@
   const searchKind = $('#searchKind');
   const filterInput = $('#filter');
   const placeholders = {
-    '': 'Filter loaded commits… (Enter searches all history)',
+    '': 'Filter loaded commits by message, author, hash or file… (Enter searches all history)',
     any: 'Message, author or file name… (Enter)',
     message: 'Commit message regex… (Enter)',
     author: 'Author name or email… (Enter)',
@@ -2080,11 +2097,13 @@
   searchKind.addEventListener('change', () => {
     updatePlaceholder();
     applyFilter();
+    requestFileHits();
     filterInput.focus();
   });
   filterInput.addEventListener('input', e => {
     S.filter = e.target.value;
     applyFilter();
+    requestFileHits(250);
   });
   document.addEventListener('keydown', e => {
     if (!e.target.closest?.('#filterForm')) return;

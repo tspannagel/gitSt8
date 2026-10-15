@@ -622,6 +622,13 @@ export class RepoPanel {
     }
     await this.setQuery(query);
   }
+  /** Live "Filter loaded" mode: which loaded commits change a file whose path contains the text. */
+  async on_matchFiles(m: Msg) {
+    const value = String(m.value || '');
+    const hashes = (this.lastCommits || []).map(c => c.hash);
+    const matches = await this.git().commitsTouching(hashes, value);
+    this.post({ type: 'fileMatches', value, hashes: matches });
+  }
   async on_reveal(m: Msg) {
     await this.revealCommit(m.sha, m.path);
   }
