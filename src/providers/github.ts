@@ -1,8 +1,10 @@
 import { toStatus } from './ci';
 import { HttpError, requestJson } from './http';
-import { AuthError, AuthHeader, NewPullRequest, CiCheck, CiState, CiStatus, ProviderClient, PullRequest, RepoRef, ReviewState } from './types';
+import { AuthError, AuthHeader, NewPullRequest, CiCheck, CiState, CiStatus, HostedRepo, ProviderClient, PullRequest, RepoRef, ReviewState } from './types';
 
 const BATCH = 40;
+/** Pages of 100 when listing the viewer's repositories. */
+const REPO_PAGES = 10;
 
 const CONTEXTS = `contexts(first: 50) {
   nodes {
@@ -136,6 +138,38 @@ export function friendlyCreateError(e: unknown): Error {
   return e instanceof Error ? e : new Error(msg);
 }
 
+export interface GqlRepo {
+  nameWithOwner: string;
+  url: string;
+  description: string | null;
+  isPrivate: boolean;
+  isArchived: boolean;
+  isFork: boolean;
+}
+
+export const VIEWER_REPOS_QUERY = `query($after: String) {
+  viewer {
+    repositories(first: 100, after: $after, affiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER],
+      ownerAffiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER], orderBy: { field: PUSHED_AT, direction: DESC }) {
+      nodes { nameWithOwner url description isPrivate isArchived isFork }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}`;
+
+export function mapRepo(r: GqlRepo): HostedRepo {
+  return {
+    provider: 'github',
+    label: r.nameWithOwner,
+    cloneUrl: `${r.url}.git`,
+    webUrl: r.url,
+    description: r.description || undefined,
+    isPrivate: r.isPrivate,
+    isArchived: r.isArchived,
+    isFork: r.isFork,
+  };
+}
+
 export class GitHubClient implements ProviderClient {
   constructor(private readonly auth: (host: string) => Promise<AuthHeader>) {}
 
@@ -162,6 +196,21 @@ export class GitHubClient implements ProviderClient {
     }`;
     const data = await this.graphql<{ repository: { pullRequests: { nodes: GqlPr[] } } | null }>(repo.host, q, { owner: repo.owner, name: repo.repo });
     return (data.repository?.pullRequests.nodes || []).map(mapPullRequest);
+  }
+
+  /** Repositories the signed-in user owns, collaborates on or sees through an organization; recently pushed first. */
+  async repositories(host: string): Promise<HostedRepo[]> {
+    const repos: HostedRepo[] = [];
+    let after: string | null = null;
+    for (let page = 0; page < REPO_PAGES; page++) {
+      type Page = { viewer: { repositories: { nodes: GqlRepo[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } } } };
+      const data: Page = await this.graphql<Page>(host, VIEWER_REPOS_QUERY, { after });
+      const r = data.viewer.repositories;
+      repos.push(...r.nodes.map(mapRepo));
+      if (!r.pageInfo.hasNextPage) break;
+      after = r.pageInfo.endCursor;
+    }
+    return repos;
   }
 
   async statuses(repo: RepoRef, shas: string[]): Promise<Record<string, CiStatus>> {

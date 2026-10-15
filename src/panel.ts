@@ -14,6 +14,7 @@ import { ProviderId } from './providers/types';
 import { buildCommitPrompt, cleanModelOutput } from './commitPrompt';
 import { branchUrl, commitUrl, createPrUrl, fileUrl, providerName } from './providers/links';
 import { defaultBody, defaultTitle, prHeadRefspec } from './prdraft';
+import { chooseInitFolder, cloneRepository, defaultBranch, pickRepositoryUrl } from './repoSetup';
 import type { API, Repository } from './types/git';
 
 const PAGE = 400;
@@ -932,13 +933,87 @@ export class RepoPanel {
 
   // ---- remotes
 
+  /** Remote URL from the signed-in GitHub / Azure DevOps account or typed; then fetch it. */
   async on_addRemote() {
-    const name = await vscode.window.showInputBox({ prompt: 'Remote name', value: this.lastRefs?.remotes.length ? 'upstream' : 'origin' });
-    if (!name) return;
-    const url = await vscode.window.showInputBox({ prompt: `URL for '${name}'` });
+    const url = await pickRepositoryUrl(this.integrations, 'Add remote');
     if (!url) return;
-    const ok = await this.runOp(`Add remote ${name}`, () => this.git().run(['remote', 'add', name, url]));
-    if (ok) await this.runOp(`Fetch ${name}`, () => this.requireRepo().fetch({ remote: name }), true);
+    const existing = (await this.git().remotes()).map(r => r.name);
+    const name = await vscode.window.showInputBox({
+      prompt: `Name for the remote ${url}`,
+      value: existing.includes('origin') ? 'upstream' : 'origin',
+      validateInput: v =>
+        !v.trim() ? 'Enter a name.' : existing.includes(v.trim()) ? `A remote named '${v.trim()}' already exists.` : /\s|^-/.test(v.trim()) ? 'No spaces, and no leading "-".' : undefined,
+    });
+    if (!name?.trim()) return;
+    const remote = name.trim();
+    if (!(await this.runOp(`Add remote ${remote}`, () => this.git().run(['remote', 'add', remote, url])))) return;
+    if (await this.runOp(`Fetch ${remote}`, () => this.requireRepo().fetch({ remote }), true)) await this.offerRemoteCheckout(remote);
+  }
+
+  /**
+   * After adding a remote to a repository without commits (a fresh `git init`): offer to check out the remote's
+   * branch, so existing history arrives without a separate pull. Git refuses if untracked files would be overwritten.
+   */
+  private async offerRemoteCheckout(remote: string) {
+    const git = this.git();
+    const head = await git.head();
+    if (head.sha) return;
+    const branches = (await git.refs()).remote.filter(r => r.remote === remote && r.branch !== 'HEAD');
+    if (!branches.length) {
+      vscode.window.showInformationMessage(`gitSt8: added '${remote}'. It has no branches yet: commit, then Push to publish '${head.branch || 'your branch'}'.`);
+      return;
+    }
+    const pick = [head.branch, 'main', 'master'].map(n => branches.find(b => b.branch === n)).find(Boolean) || branches[0];
+    const choice = await vscode.window.showInformationMessage(
+      `'${remote}' already has history. Check out ${pick.name} as local branch '${pick.branch}'?`,
+      { detail: 'Your folder has no commits yet. Files in the folder stay; git stops if one of them would be overwritten.' },
+      'Check Out'
+    );
+    if (choice === 'Check Out') await this.runOp(`Check out ${pick.name}`, () => git.run(['checkout', '--track', `${remote}/${pick.branch}`]), true);
+  }
+
+  // ---- new repositories
+
+  /** `m.folder`: preset folder path (Explorer → Initialize Repository Here). */
+  async on_initRepo(m: Msg = {}) {
+    const folder = await chooseInitFolder(this.api, typeof m.folder === 'string' ? vscode.Uri.file(m.folder) : undefined);
+    if (!folder) return;
+    const branch = defaultBranch(folder);
+    let repo: Repository | null = null;
+    const ok = await this.runOp(`Initialize ${path.basename(folder.fsPath)}`, async () => (repo = await this.api.init(folder, { defaultBranch: branch })));
+    if (!ok) return;
+    const root = (repo as Repository | null)?.rootUri.fsPath || folder.fsPath;
+    if (!vscode.workspace.getWorkspaceFolder(folder)) {
+      const open = await vscode.window.showInformationMessage(
+        `Initialized ${path.basename(root)}. It is not part of this workspace.`,
+        'Add to Workspace',
+        'Open in New Window'
+      );
+      if (open === 'Open in New Window') return vscode.commands.executeCommand('vscode.openFolder', folder, { forceNewWindow: true });
+      if (open === 'Add to Workspace') vscode.workspace.updateWorkspaceFolders(vscode.workspace.workspaceFolders?.length || 0, 0, { uri: folder });
+    }
+    if (!repo) return; // initialized, but the git extension did not open it (e.g. a folder outside the workspace)
+    this.setRoot(root);
+    const next = await vscode.window.showInformationMessage(
+      `Initialized a git repository in ${path.basename(root)} (branch '${branch}'). Connect it to a remote repository?`,
+      'Add Remote…'
+    );
+    if (next) await this.on_addRemote();
+  }
+
+  /**
+   * Clone from the signed-in GitHub / Azure DevOps account or a URL; show the clone here if it joins this window.
+   * `m.addToWorkspace`: add it as a workspace folder instead of asking.
+   */
+  async on_cloneRepo(m: Msg = {}) {
+    const add = !!m.addToWorkspace;
+    const url = await pickRepositoryUrl(this.integrations, add ? 'Clone and add to workspace' : 'Clone repository');
+    if (!url) return;
+    const dir = await cloneRepository(this.api, url, add);
+    // Opened elsewhere, or reopening this window. Just added folders may not be listed yet, so trust `add`.
+    if (!dir || (!add && !vscode.workspace.getWorkspaceFolder(dir))) return;
+    const repo = this.api.getRepository(dir) || (await this.api.openRepository(dir));
+    if (repo) this.setRoot(repo.rootUri.fsPath);
   }
 
   async on_fetchRemote(m: Msg) {
@@ -2103,6 +2178,7 @@ ${font ? `<style nonce="${nonce}">@font-face { font-family: "codicon"; font-disp
     <i class="ci" data-icon="repo"></i>
     <select id="repo"></select>
   </label>
+  <button class="tb" id="repoAdd" title="Clone a repository (from GitHub, Azure DevOps or a URL) or initialize a new one"><i class="ci" data-icon="repo-clone"></i><span class="lbl">Clone</span></button>
   <span id="head" class="head-chip"></span>
   <span id="integration" hidden></span>
   <span class="tgroup">

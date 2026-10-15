@@ -55,6 +55,20 @@ export interface NewPullRequest {
   draft: boolean;
 }
 
+/** A repository the signed-in account can see, offered for clone / add remote. */
+export interface HostedRepo {
+  provider: ProviderId;
+  /** "owner/repo" or "org/project/repo". */
+  label: string;
+  /** HTTPS clone URL. */
+  cloneUrl: string;
+  webUrl: string;
+  description?: string;
+  isPrivate?: boolean;
+  isArchived?: boolean;
+  isFork?: boolean;
+}
+
 export interface ProviderClient {
   pullRequests(repo: RepoRef): Promise<PullRequest[]>;
   /** CI status per commit; commits without any CI are left out. */

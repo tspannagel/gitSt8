@@ -19,7 +19,7 @@
     ellipsis: 0xea7c, filter: 0xeaf1, folder: 0xea83, 'folder-opened': 0xeaf7, 'git-branch': 0xec6f,
     'git-commit': 0xeafc, 'git-compare': 0xeafd, 'git-merge': 0xeafe, globe: 0xeb01, history: 0xea82,
     'go-to-file': 0xea94, layers: 0xebd2, 'link-external': 0xeb14, lock: 0xea75, 'multiple-windows': 0xeb23,
-    remove: 0xeb3b, repo: 0xea62, 'repo-pull': 0xeb40, 'repo-push': 0xeb41, refresh: 0xeb37, 'root-folder': 0xeb46,
+    remove: 0xeb3b, repo: 0xea62, 'repo-clone': 0xeb3e, 'repo-pull': 0xeb40, 'repo-push': 0xeb41, refresh: 0xeb37, 'root-folder': 0xeb46,
     search: 0xea6d, sync: 0xea77, tag: 0xea66, trash: 0xea81, warning: 0xea6c, 'git-stash': 0xec26,
     'debug-disconnect': 0xead0, milestone: 0xeb20, server: 0xeb50,
     github: 0xea84, 'azure-devops': 0xebe8, 'git-pull-request': 0xea64, 'git-pull-request-draft': 0xebdb,
@@ -200,15 +200,24 @@
     renderGraph();
   }
 
+  const REPO_ACTIONS = [
+    { value: ':clone', label: 'Clone repository…', cmd: 'cloneRepo' },
+    { value: ':cloneAdd', label: 'Clone and add to workspace…', cmd: 'cloneRepo', addToWorkspace: true },
+    { value: ':init', label: 'Initialize repository…', cmd: 'initRepo' },
+  ];
+
   function renderRepoPicker(repos, root) {
     const sel = $('#repo');
     // Native <option>s cannot use the icon font, so keep this plain text.
     const label = r => `${r.name}${r.branch ? `  —  ${r.branch}` : ''}${r.changes ? `   (${r.changes} changed)` : ''}`;
-    sel.innerHTML = repos.length
-      ? repos.map(r => `<option value="${esc(r.root)}" title="${esc(r.root)}" ${normPath(r.root) === normPath(root) ? 'selected' : ''}>${esc(label(r))}</option>`).join('')
-      : '<option>No repository</option>';
-    sel.disabled = repos.length <= 1;
-    sel.title = repos.length > 1 ? `${repos.length} repositories open. Switch the one shown here.` : root || '';
+    sel.innerHTML =
+      (repos.length
+        ? repos.map(r => `<option value="${esc(r.root)}" title="${esc(r.root)}" ${normPath(r.root) === normPath(root) ? 'selected' : ''}>${esc(label(r))}</option>`).join('')
+        : '<option value="" selected>No repository</option>') +
+      // Actions at the end of the list; picking one runs it and the selection snaps back (see the change handler).
+      `<option disabled>──────────</option>${REPO_ACTIONS.map(a => `<option value="${a.value}">${a.label}</option>`).join('')}`;
+    sel.title = repos.length > 1 ? `${repos.length} repositories open. Switch the one shown here, or clone / initialize another.` : `${root || ''}
+Clone or initialize another repository from this list.`.trim();
     $('.repo-pick').classList.toggle('multi', repos.length > 1);
   }
 
@@ -823,7 +832,7 @@
     const tbody = $('#graph tbody');
     if (d.empty || !d.commits) {
       tbody.innerHTML = '';
-      $('#more').innerHTML = '';
+      $('#more').innerHTML = d.empty ? welcomeHtml() : '';
       return;
     }
     const lanes = Math.min(d.maxLanes, 40);
@@ -850,12 +859,39 @@
         <td class="sha">${c.wip ? '' : c.hash.slice(0, 7)}</td></tr>`);
     });
     tbody.innerHTML = html.join('');
-    $('#more').innerHTML = d.hasMore ? '<button data-cmd="loadMore">Load more commits</button>' : '';
+    $('#more').innerHTML = d.hasMore ? '<button data-cmd="loadMore">Load more commits</button>' : freshRepoHtml(d);
     S.multi = S.multi.filter(sha => commitBySha(sha));
     if (S.selected && !commitBySha(S.selected)) S.selected = null;
     applyMarks();
     applyFilter();
     renderInline();
+  }
+
+  /** No repository open: start one here or get one from a server. */
+  function welcomeHtml() {
+    return `<div class="welcome">
+      <p>No git repository is open in this window.</p>
+      <div class="welcome-btns">
+        <button class="primary" data-cmd="initRepo" title="Run git init in a folder (an empty one, or one with files you want to version)">${ic('repo', 'sm')}Initialize repository…</button>
+        <button data-cmd="cloneRepo" title="Clone from your GitHub or Azure DevOps account, or from a URL">${ic('repo-clone', 'sm')}Clone repository…</button>
+      </div>
+    </div>`;
+  }
+
+  /** A repository without commits (just initialized): say what comes next instead of an empty graph. */
+  function freshRepoHtml(d) {
+    if (d.commits.some(c => !c.wip) || d.query || d.filter) return '';
+    const hasRemote = (d.refs?.remotes || []).length > 0;
+    const wip = d.commits.some(c => c.wip);
+    return `<div class="welcome">
+      <p>No commits yet${d.head?.branch ? ` on <b>${esc(d.head.branch)}</b>` : ''}. ${
+        hasRemote ? 'Commit your files, then Push to publish them.' : 'Commit your files, and add a remote to publish them or to get existing history.'
+      }</p>
+      <div class="welcome-btns">
+        ${wip ? `<button class="primary" data-cmd="openCommit">${ic('check', 'sm')}Commit…</button>` : ''}
+        ${hasRemote ? '' : `<button data-cmd="addRemote" title="Connect to a repository on GitHub, Azure DevOps or any URL">${ic('cloud', 'sm')}Add remote…</button>`}
+      </div>
+    </div>`;
   }
 
   function applyMarks() {
@@ -1864,6 +1900,16 @@
       return showMenu(r.left, r.bottom, integrationMenu());
     }
 
+    const repoAdd = t.closest('#repoAdd');
+    if (repoAdd) {
+      const r = repoAdd.getBoundingClientRect();
+      return showMenu(r.left, r.bottom, [
+        { label: 'Clone repository…', icon: 'repo-clone', run: () => post('cloneRepo') },
+        { label: 'Clone and add to workspace…', icon: 'root-folder', run: () => post('cloneRepo', { addToWorkspace: true }) },
+        { label: 'Initialize repository…', icon: 'repo', run: () => post('initRepo') },
+      ]);
+    }
+
     const secMenu = t.closest('[data-secmenu]');
     if (secMenu) {
       const r = secMenu.getBoundingClientRect();
@@ -2077,7 +2123,12 @@
   window.addEventListener('blur', hideMenu);
   $('#graphWrap').addEventListener('scroll', hideMenu);
 
-  $('#repo').addEventListener('change', e => post('selectRepo', { root: e.target.value }));
+  $('#repo').addEventListener('change', e => {
+    const action = REPO_ACTIONS.find(a => a.value === e.target.value);
+    if (!action) return post('selectRepo', { root: e.target.value });
+    e.target.value = S.data?.root || ''; // snap back to the shown repository
+    post(action.cmd, action.addToWorkspace ? { addToWorkspace: true } : {});
+  });
   $('#showAll').addEventListener('change', e => post('setShowAll', { value: e.target.checked }));
 
   // Search: "Filter loaded" dims rows live; any other mode (or Enter) searches the whole history.

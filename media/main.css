@@ -681,3 +681,11 @@ table.reflog .btns { text-align: right; }
 .dld { background: var(--vscode-diffEditor-removedTextBackground, rgba(248, 81, 73, 0.2)); cursor: pointer; }
 .dla:hover, .dld:hover { filter: brightness(1.2); }
 .dl.sel { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; box-shadow: inset 4px 0 0 var(--vscode-focusBorder); }
+
+/* ---------------------------------------------------------------- empty states (no repository / no commits yet) */
+
+.welcome { padding: 24px 16px; text-align: center; color: var(--vscode-descriptionForeground); }
+.welcome p { margin: 0 0 12px; }
+.welcome b { color: var(--vscode-foreground); font-weight: 600; }
+.welcome-btns { display: inline-flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.welcome-btns button { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; }

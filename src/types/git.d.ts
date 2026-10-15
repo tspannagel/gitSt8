@@ -53,6 +53,18 @@ export interface Repository {
   commit(message: string, opts?: CommitOptions): Promise<void>;
 }
 
+export interface InitOptions {
+  defaultBranch?: string;
+}
+
+export interface CloneOptions {
+  parentPath?: Uri;
+  recursive?: boolean;
+  ref?: string;
+  /** 'none' skips the "open the clone?" prompt. Left out, the git extension asks (honoring git.openAfterClone). */
+  postCloneAction?: 'none';
+}
+
 export interface API {
   readonly state: 'uninitialized' | 'initialized';
   readonly git: { readonly path: string };
@@ -62,4 +74,7 @@ export interface API {
   toGitUri(uri: Uri, ref: string): Uri;
   getRepository(uri: Uri): Repository | null;
   openRepository(root: Uri): Promise<Repository | null>;
+  init(root: Uri, options?: InitOptions): Promise<Repository | null>;
+  /** Asks for the parent folder when `parentPath` is left out. Resolves to the clone's folder, or null if cancelled. */
+  clone(uri: Uri, options?: CloneOptions): Promise<Uri | null>;
 }

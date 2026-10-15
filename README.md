@@ -102,6 +102,15 @@ Prefer an editor tab? Set `"gitst8.location": "editor"`. You can also drag the p
 
 ## Everyday workflows
 
+### Start a repository: initialize or clone
+
+Always available: the **Clone** button next to the repository picker, and the end of the picker's list itself: **Clone repository…**, **Clone and add to workspace…**, **Initialize repository…**. When no repository is open, the view also shows big *Initialize* / *Clone* buttons. Both are in the command palette too, and *Initialize Repository…* is on every folder's right-click menu in the Explorer.
+
+- **Initialize** runs `git init` in a folder: a workspace folder that is not a repository yet, or any folder you browse to. It may be empty or already contain files. The first branch is named after VS Code's `git.defaultBranchName` (default `main`). A folder inside another repository needs an extra confirmation, since nested repositories are rarely what you want. A folder outside the workspace can be added to it or opened in a new window. Afterwards gitSt8 offers **Add Remote…**.
+- **Clone** asks where the repository lives: **GitHub** (and GitHub Enterprise, if `github-enterprise.uri` is set), **Azure DevOps**, or **Enter a URL…** (HTTPS or SSH). For GitHub you get a searchable list of the repositories you own, collaborate on or reach through an organization, most recently pushed first. For Azure DevOps you pick an organization first, then a repository from any of its projects. Organizations in another Entra tenant are not listed; choose *Enter an organization…* and type the name. Then VS Code's own clone takes over: it asks for the parent folder, shows progress, and offers *Open*, *Open in New Window* or *Add to Workspace* (or follows `git.openAfterClone`). **Clone and add to workspace…** skips that question and adds the clone as a folder of the current workspace. A clone added to the workspace is shown in gitSt8 right away.
+
+A repository without commits shows *No commits yet* in place of the graph, with **Commit…** and, until it has a remote, **Add remote…**.
+
 ### Commit
 
 1. Click **✓ Commit** in the toolbar, or click the *Uncommitted changes* row.
@@ -346,7 +355,9 @@ The current branch, the base branch and branches checked out in other worktrees 
 
 ### Remotes
 
-Remotes **⋯** → **Add remote**. Right-click a remote's name for **Fetch & prune**, **Prune stale remote branches**, **Copy URL**, **Change URL**, **Rename**, **Remove**.
+Remotes **⋯** → **Add remote…** first asks where the repository is: pick it from your GitHub or Azure DevOps account (the same lists as *Clone*), or enter a URL. Then name the remote (`origin` if there is none yet, else `upstream`); gitSt8 adds it and fetches it. If your repository has no commits yet (just initialized) and the remote already has history, gitSt8 offers to check out the remote's branch (your current branch name, else `main` / `master`) as a local tracking branch. Files already in the folder stay; if one of them would be overwritten, git stops and nothing changes. If the remote is empty, commit and then **Push** to publish your branch.
+
+Right-click a remote's name for **Fetch & prune**, **Prune stale remote branches**, **Copy URL**, **Change URL**, **Rename**, **Remove**.
 
 ### GitHub and Azure DevOps
 
@@ -371,7 +382,7 @@ When a remote points at GitHub, GitHub Enterprise or Azure DevOps, gitSt8 shows 
 
 **Token scopes for writes.** GitHub needs the `repo` scope (the built-in sign-in has it). An Azure DevOps personal access token needs *Code (Read & write)* to create pull requests, in addition to the read scopes. If the service refuses, gitSt8 tells you which scope is missing.
 
-Until you sign in, the chip shows a **Sign in** button. gitSt8 never opens a sign-in prompt on its own.
+Until you sign in, the chip shows a **Sign in** button. gitSt8 never opens a sign-in prompt on its own: only **Sign in**, *Create pull request*, and choosing GitHub or Azure DevOps in *Clone* / *Add remote* can ask you to sign in. To list your organizations with a personal access token, it also needs the *User Profile (read)* scope; without it, gitSt8 asks you to type the organization.
 
 **Which remote.** `gitst8.integrations.remote`, else `origin`, else the first remote on a supported host.
 
@@ -392,6 +403,8 @@ In a multi-root workspace, or a folder with nested repositories, the repository 
 | `gitSt8: Open Repository View` | `Ctrl+Alt+Shift+G` / macOS `Cmd+Option+Shift+G` | Open or focus the view |
 | `gitSt8: Show Line's Commit in gitSt8` | `Ctrl+Alt+Shift+B` / macOS `Cmd+Option+Shift+B` (editor focused) | Jump to the commit of the line under the cursor |
 | `gitSt8: Copy Permalink to Line(s)` | | Copies a GitHub / Azure DevOps link to the selected lines at the current HEAD commit (also in the editor right-click menu) |
+| `gitSt8: Initialize Repository…` | | `git init` in a workspace folder or any folder (also on folders in the Explorer right-click menu) |
+| `gitSt8: Clone Repository…` | | Clone from your GitHub or Azure DevOps account, or from a URL |
 | `gitSt8: Apply Patch…` | | Apply a `.patch`, `.diff` or `.mbox` file |
 | `gitSt8: File History in gitSt8` | | History of the active or right-clicked file or folder |
 | `gitSt8: Fetch All & Prune` | | Fetch and prune every open repository |

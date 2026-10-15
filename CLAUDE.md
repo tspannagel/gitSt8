@@ -25,6 +25,7 @@ npm run package    # vsce package -> .vsix; release via .github/workflows/publis
 | `src/git.ts` | `GitCli` wrapper + parsers. No `vscode` import |
 | `src/graph.ts` | commit graph lane layout. No `vscode` import |
 | `src/{bisect,submodules,lfs,logFilter,signature,hunks,release,prdraft,commitPrompt}.ts` | pure parsers/builders per feature (bisect state, submodule/LFS status, history filter args, signature codes, diff hunks + partial patches, semver/changelog, PR title/body, LLM commit prompt). No `vscode` import; each has a test file |
+| `src/repoSetup.ts` | init / clone / add-remote quick picks: folder chooser, "pick a repo from your GitHub / Azure DevOps account or enter a URL". Init and clone go through the vscode.git API (`api.init`, `api.clone`) |
 | `src/integration.ts` | GitHub/Azure DevOps: remote detection, auth (VS Code accounts + Azure PAT in SecretStorage), caching/TTL |
 | `src/providers/*` | API clients and mappers (`github.ts` GraphQL, `azure.ts` REST 7.1, `detect.ts`, `links.ts` web URLs, `ci.ts`, `http.ts`). **Must not import `vscode`**, so they stay unit-testable |
 | `src/types/git.d.ts` | hand-written subset of the vscode.git API. Extend it when using more of the API |

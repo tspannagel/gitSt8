@@ -101,6 +101,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       vscode.window.setStatusBarMessage(`gitSt8: permalink copied${editor.document.isDirty ? ' (file has unsaved changes, line numbers may differ)' : ''}`, 4000);
     }),
 
+    // Explorer → folder → "Initialize Git Repository Here" passes the folder; the palette asks.
+    vscode.commands.registerCommand('gitst8.init', async (arg: unknown) => {
+      const panel = await show();
+      await panel.ready;
+      await panel.on_initRepo({ folder: arg instanceof vscode.Uri && arg.scheme === 'file' ? arg.fsPath : undefined });
+    }),
+
+    vscode.commands.registerCommand('gitst8.clone', async () => {
+      const panel = await show();
+      await panel.ready;
+      await panel.on_cloneRepo();
+    }),
+
     vscode.commands.registerCommand('gitst8.applyPatch', async () => {
       const panel = await show();
       await panel.ready;

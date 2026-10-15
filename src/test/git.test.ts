@@ -239,3 +239,34 @@ test('reword after a stopped step reads its message file from the git dir on --c
   assert.deepEqual(g('log', '--format=%s', 'main..HEAD').trim().split('\n'), ['E2 reworded', 'e1']);
   fs.rmSync(work, { recursive: true, force: true });
 });
+
+test('fresh git init: state queries work, and a remote branch can be checked out from the unborn HEAD', async () => {
+  const fresh = path.join(tmp, 'fresh');
+  fs.mkdirSync(fresh);
+  const f = (...args: string[]) => cp.execFileSync('git', args, { cwd: fresh, encoding: 'utf8', env, stdio: ['pipe', 'pipe', 'pipe'] });
+  f('init', '-q', '-b', 'main');
+  const fg = new GitCli('git', fresh);
+  assert.deepEqual(await fg.head(), { branch: 'main', sha: null, detached: false });
+  assert.deepEqual((await fg.log({ limit: 10, all: true })).commits, []);
+  assert.deepEqual((await fg.refs()).local, []);
+
+  // What "Add remote…" then "Check Out" does (on_addRemote → offerRemoteCheckout).
+  f('remote', 'add', 'origin', path.join(tmp, 'remote.git'));
+  f('fetch', '-q', 'origin');
+  const branches = (await fg.refs()).remote.filter(r => r.remote === 'origin' && r.branch !== 'HEAD');
+  assert.ok(branches.some(b => b.branch === 'main'));
+
+  // An untracked file that the checkout would overwrite stops git; the file is kept.
+  fs.writeFileSync(path.join(fresh, 'README.md'), 'mine\n');
+  assert.throws(() => f('checkout', '--track', 'origin/main'), /would be overwritten/);
+  assert.equal(fs.readFileSync(path.join(fresh, 'README.md'), 'utf8'), 'mine\n');
+
+  fs.rmSync(path.join(fresh, 'README.md'));
+  fs.writeFileSync(path.join(fresh, 'notes.txt'), 'kept\n');
+  f('checkout', '-q', '--track', 'origin/main');
+  const head = await fg.head();
+  assert.equal(head.branch, 'main');
+  assert.ok(head.sha);
+  assert.equal((await fg.refs()).local.find(b => b.name === 'main')?.upstream, 'origin/main');
+  assert.ok(fs.existsSync(path.join(fresh, 'notes.txt')), 'unrelated untracked files stay');
+});

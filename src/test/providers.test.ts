@@ -148,3 +148,35 @@ test('Azure DevOps: pull request fixture and review votes', () => {
   assert.equal(ado.reviewState([{ vote: 10 }, { vote: 0, isRequired: true }]), 'required');
   assert.equal(ado.reviewState([]), 'none');
 });
+
+test('GitHub: viewer repositories map to clone candidates', () => {
+  const r = gh.mapRepo({ nameWithOwner: 'octo/app', url: 'https://github.com/octo/app', description: null, isPrivate: true, isArchived: false, isFork: true });
+  assert.deepEqual(r, {
+    provider: 'github',
+    label: 'octo/app',
+    cloneUrl: 'https://github.com/octo/app.git',
+    webUrl: 'https://github.com/octo/app',
+    description: undefined,
+    isPrivate: true,
+    isArchived: false,
+    isFork: true,
+  });
+  // The query takes the page cursor as a variable, never interpolated.
+  assert.match(gh.VIEWER_REPOS_QUERY, /after: \$after/);
+});
+
+test('Azure DevOps: repositories of an organization, disabled ones left out', () => {
+  const repos = ado.mapRepos('contoso', [
+    { name: 'Web', remoteUrl: 'https://contoso@dev.azure.com/contoso/Shop/_git/Web', webUrl: 'https://dev.azure.com/contoso/Shop/_git/Web', project: { name: 'Shop' } },
+    { name: 'Old', remoteUrl: 'https://contoso@dev.azure.com/contoso/Shop/_git/Old', webUrl: 'x', project: { name: 'Shop' }, isDisabled: true },
+    { name: 'Api', remoteUrl: 'https://contoso@dev.azure.com/contoso/Shop/_git/Api', webUrl: 'https://dev.azure.com/contoso/Shop/_git/Api', project: { name: 'Shop' } },
+  ]);
+  assert.deepEqual(
+    repos.map(r => [r.label, r.cloneUrl]),
+    [
+      ['contoso/Shop/Api', 'https://contoso@dev.azure.com/contoso/Shop/_git/Api'],
+      ['contoso/Shop/Web', 'https://contoso@dev.azure.com/contoso/Shop/_git/Web'],
+    ]
+  );
+  assert.ok(repos.every(r => r.provider === 'azure'));
+});

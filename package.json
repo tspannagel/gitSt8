@@ -84,6 +84,18 @@
         "category": "gitSt8"
       },
       {
+        "command": "gitst8.init",
+        "title": "Initialize Repository…",
+        "category": "gitSt8",
+        "icon": "$(repo)"
+      },
+      {
+        "command": "gitst8.clone",
+        "title": "Clone Repository…",
+        "category": "gitSt8",
+        "icon": "$(repo-clone)"
+      },
+      {
         "command": "gitst8.signInGitHub",
         "title": "Sign in to GitHub",
         "category": "gitSt8"
@@ -155,6 +167,11 @@
         },
         {
           "command": "gitst8.addGitkeep",
+          "group": "gitst8",
+          "when": "resourceScheme == file && explorerResourceIsFolder"
+        },
+        {
+          "command": "gitst8.init",
           "group": "gitst8",
           "when": "resourceScheme == file && explorerResourceIsFolder"
         }

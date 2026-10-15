@@ -1,6 +1,6 @@
 import { toStatus } from './ci';
 import { HttpError, requestJson } from './http';
-import { AuthError, AuthHeader, NewPullRequest, CiCheck, CiState, CiStatus, ProviderClient, PullRequest, RepoRef, ReviewState } from './types';
+import { AuthError, AuthHeader, NewPullRequest, CiCheck, CiState, CiStatus, HostedRepo, ProviderClient, PullRequest, RepoRef, ReviewState } from './types';
 
 /** Azure DevOps resource id, used as the OAuth scope for Microsoft sign-in. */
 export const AZURE_DEVOPS_SCOPE = '499b84ac-1321-427f-aa17-267ca6975798/.default';
@@ -130,6 +130,37 @@ export function friendlyCreateError(e: unknown): Error {
   if ((e instanceof HttpError && e.status === 409) || /TF401179/i.test(msg)) return new Error('A pull request for this branch already exists.');
   if (e instanceof AuthError) return new Error('Azure DevOps refused to create the pull request. A personal access token needs the "Code (Read & write)" scope.');
   return e instanceof Error ? e : new Error(msg);
+}
+
+export interface AdoGitRepo {
+  name: string;
+  remoteUrl: string;
+  webUrl: string;
+  isDisabled?: boolean;
+  project: { name: string };
+}
+
+/** Clone candidates of one organization; disabled repositories cannot be cloned, so they are left out. */
+export function mapRepos(org: string, repos: AdoGitRepo[]): HostedRepo[] {
+  return repos
+    .filter(r => !r.isDisabled && r.remoteUrl)
+    .map(r => ({ provider: 'azure' as const, label: `${org}/${r.project.name}/${r.name}`, cloneUrl: r.remoteUrl, webUrl: r.webUrl }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+const VSSPS = 'https://app.vssps.visualstudio.com/_apis';
+
+/** Organizations the signed-in user is a member of (only those of the token's Entra tenant). */
+export async function listOrganizations(auth: AuthHeader): Promise<string[]> {
+  const me = await requestJson<{ id: string }>(`${VSSPS}/profile/profiles/me?api-version=${API_VERSION}`, auth);
+  const res = await requestJson<{ value: { accountName: string }[] }>(`${VSSPS}/accounts?memberId=${encodeURIComponent(me.id)}&api-version=${API_VERSION}`, auth);
+  return res.value.map(a => a.accountName).sort((a, b) => a.localeCompare(b));
+}
+
+/** Every repository in every project of `org` the user can read. */
+export async function listRepositories(org: string, auth: AuthHeader): Promise<HostedRepo[]> {
+  const res = await requestJson<{ value: AdoGitRepo[] }>(`https://dev.azure.com/${encodeURIComponent(org)}/_apis/git/repositories?api-version=${API_VERSION}`, auth);
+  return mapRepos(org, res.value);
 }
 
 export class AzureDevOpsClient implements ProviderClient {

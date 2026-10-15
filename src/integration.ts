@@ -1,9 +1,9 @@
 import * as vscode from 'vscode';
 import { RemoteInfo } from './git';
-import { AZURE_DEVOPS_SCOPE, AzureDevOpsClient, resourceTenant } from './providers/azure';
+import { AZURE_DEVOPS_SCOPE, AzureDevOpsClient, listOrganizations, listRepositories, resourceTenant } from './providers/azure';
 import { parseRemoteUrl, repoLabel } from './providers/detect';
 import { GitHubClient } from './providers/github';
-import { AuthError, CiStatus, NewPullRequest, ProviderClient, ProviderId, PullRequest, RepoRef } from './providers/types';
+import { AuthError, CiStatus, HostedRepo, NewPullRequest, ProviderClient, ProviderId, PullRequest, RepoRef } from './providers/types';
 
 /** What the webview needs to show hosting-service information. */
 export interface IntegrationState {
@@ -38,7 +38,7 @@ const providerName = (p: ProviderId) => (p === 'github' ? 'GitHub' : 'Azure DevO
  */
 export class Integrations {
   private readonly github = new GitHubClient(host => this.githubAuth(host));
-  private readonly azure = new AzureDevOpsClient(repo => this.azureAuth(repo, false));
+  private readonly azure = new AzureDevOpsClient(repo => this.azureAuth(repo.owner, false));
   private readonly statusCache = new Map<string, Cached<CiStatus | null>>();
   private readonly prCache = new Map<string, Cached<PullRequest[]>>();
   /** Providers the user explicitly asked to sign in to during this load. */
@@ -93,26 +93,27 @@ export class Integrations {
 
   // ---------------------------------------------------------------- auth
 
-  private async githubAuth(host: string): Promise<string> {
-    const ask = this.interactive.has('github');
+  private async githubAuth(host: string, interactive = false): Promise<string> {
+    const ask = interactive || this.interactive.has('github');
     const providerId = host === 'github.com' ? 'github' : 'github-enterprise';
     const session = await vscode.authentication.getSession(providerId, ['repo'], ask ? { createIfNone: true } : { silent: true });
     if (!session) throw new AuthError('Not signed in to GitHub.');
     return `Bearer ${session.accessToken}`;
   }
 
-  private async azureAuth(repo: RepoRef, interactive: boolean): Promise<string> {
-    const pat = (await this.secrets.get(`${PAT_KEY}:${repo.owner.toLowerCase()}`)) || (await this.secrets.get(PAT_KEY));
+  /** `org` empty: any organization (the all-organizations PAT, or a token of the home tenant). */
+  private async azureAuth(org: string, interactive: boolean, pickAccount = true): Promise<string> {
+    const pat = (org && (await this.secrets.get(`${PAT_KEY}:${org.toLowerCase()}`))) || (await this.secrets.get(PAT_KEY));
     if (pat) {
       this.azureAccount = undefined;
       return `Basic ${Buffer.from(`:${pat}`).toString('base64')}`;
     }
     const ask = interactive || this.interactive.has('azure');
-    const tenant = await this.azureTenant(repo.owner);
+    const tenant = org ? await this.azureTenant(org) : undefined;
     const scopes = [AZURE_DEVOPS_SCOPE, ...(tenant ? [`VSCODE_TENANT:${tenant}`] : [])];
     // On an explicit sign-in, let the user pick the account instead of silently reusing the remembered one,
     // which may be the wrong account and would make the button appear to do nothing.
-    const session = await vscode.authentication.getSession('microsoft', scopes, ask ? { createIfNone: true, clearSessionPreference: true } : { silent: true });
+    const session = await vscode.authentication.getSession('microsoft', scopes, ask ? { createIfNone: true, clearSessionPreference: pickAccount } : { silent: true });
     this.azureAccount = session?.account.label;
     if (!session) throw new AuthError('Not signed in to Azure DevOps.');
     return `Bearer ${session.accessToken}`;
@@ -159,6 +160,23 @@ export class Integrations {
     this.statusCache.clear();
     this.prCache.clear();
     this.changed.fire();
+  }
+
+  // ---------------------------------------------------------------- clone sources (explicit user action, may prompt to sign in)
+
+  /** GitHub repositories of the signed-in account on `host` (github.com or a GitHub Enterprise host). */
+  async githubRepos(host: string): Promise<HostedRepo[]> {
+    await this.githubAuth(host, true);
+    return this.github.repositories(host);
+  }
+
+  /** Azure DevOps organizations of the signed-in account. Lets the user pick the Microsoft account. */
+  async azureOrganizations(): Promise<string[]> {
+    return listOrganizations(await this.azureAuth('', true));
+  }
+
+  async azureRepos(org: string): Promise<HostedRepo[]> {
+    return listRepositories(org, await this.azureAuth(org, true, false));
   }
 
   // ---------------------------------------------------------------- writes
