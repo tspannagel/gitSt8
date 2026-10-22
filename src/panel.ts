@@ -10,7 +10,6 @@ import { Bump, classifyCommits, compareVersions, latestVersion, nextVersion, par
 import { LogFilter, keepsGraph, normalizeFilter } from './logFilter';
 import { HunkSelectionError, buildPatch } from './hunks';
 import { Integrations, IntegrationState } from './integration';
-import { ProviderId } from './providers/types';
 import { buildCommitPrompt, cleanModelOutput } from './commitPrompt';
 import { branchUrl, commitUrl, createPrUrl, fileUrl, providerName } from './providers/links';
 import { defaultBody, defaultTitle, prHeadRefspec } from './prdraft';
@@ -224,6 +223,7 @@ export class RepoPanel {
   /** Loads PRs and CI status in the background, after the graph is already shown. */
   scheduleIntegration(delay = 0, force = false): void {
     clearTimeout(this.ciTimer);
+    ++this.integrationSeq; // invalidate pending loads immediately
     this.ciTimer = setTimeout(() => this.loadIntegration(force), delay);
   }
 
@@ -241,7 +241,7 @@ export class RepoPanel {
     const tips = [...this.refs().local.map(b => b.sha), ...this.refs().remote.filter(r => r.remote === target.remote).map(r => r.sha)];
     const shas = [...new Set([...(this.lastCommits || []).filter(c => !c.wip).slice(0, n).map(c => c.hash), ...tips])];
     const seq = ++this.integrationSeq;
-    const state = await this.integrations.load(target.remote, target.repo, shas, force);
+    const state = await this.integrations.load(target.remote, target.repo, shas, force, this.root);
     if (seq !== this.integrationSeq) return; // a newer load started meanwhile
     this.lastIntegration = state;
     this.post({ type: 'integration', state });
@@ -251,7 +251,25 @@ export class RepoPanel {
   }
 
   async on_signIn(m: Msg): Promise<void> {
-    if (m.provider === 'github' || m.provider === 'azure') await this.integrations.signIn(m.provider as ProviderId);
+    await this.selectIntegrationAccount('signin', m.provider);
+  }
+
+  async on_changeIntegrationAccount(): Promise<void> {
+    await this.selectIntegrationAccount('change');
+  }
+
+  async on_setWorkspaceDefaultAccount(): Promise<void> {
+    await this.selectIntegrationAccount('default');
+  }
+
+  private async selectIntegrationAccount(action: 'signin' | 'change' | 'default', provider?: string): Promise<void> {
+    const root = this.root;
+    const target = root && this.lastRefs && this.integrations.detect(this.refs().remoteInfo);
+    if (!target || provider && provider !== target.repo.provider) {
+      vscode.window.showWarningMessage('gitSt8: select a repository with a matching supported hosting-service remote first.');
+      return;
+    }
+    await this.integrations.signIn(target.repo, root, action);
   }
 
   async on_setAzurePat(m: Msg): Promise<void> {
@@ -305,6 +323,8 @@ export class RepoPanel {
   }
 
   setRoot(root: string | undefined): void {
+    ++this.integrationSeq;
+    clearTimeout(this.ciTimer);
     this.root = root;
     this.limit = PAGE;
     this.query = null;
@@ -2002,6 +2022,7 @@ export class RepoPanel {
 
   /** Creates a pull request for a local branch. The only write to the hosting service; every step is explicit. */
   async on_createPr(m: Msg) {
+    const root = this.requireRoot();
     const name = String(m.name || '');
     const b = this.localBranch(name);
     const target = this.integrations.detect(this.refs().remoteInfo);
@@ -2018,11 +2039,12 @@ export class RepoPanel {
     if (!onRemote || b.ahead > 0) {
       const why = !onRemote ? `'${name}' is not on ${remote} yet.` : `'${name}' is ${b.ahead} commit(s) ahead of ${b.upstream}.`;
       const ok = await this.confirm(`Push '${name}' to ${remote} first?`, `${why} A pull request only contains what is on the server.`, 'Push');
-      if (!ok) return;
+      if (!ok || this.root !== root) return;
       if (onRemote) await this.pushBranch(name, false);
       else if (!(await this.runOp(`Push ${name}`, () => this.requireRepo().push(remote, `${name}:${source}`, !b.upstream), true))) return;
     }
 
+    if (this.root !== root) return;
     // Target branch: remote branches on the integration remote, default = the stack base.
     const remoteBranches = this.refs().remote.filter(r => r.remote === remote && r.branch !== 'HEAD' && r.branch !== source);
     if (!remoteBranches.length) return vscode.window.showWarningMessage(`No other branches found on ${remote}. Fetch first.`);
@@ -2047,12 +2069,12 @@ export class RepoPanel {
       [{ label: '$(git-pull-request) Create', id: 'create' }, { label: '$(git-pull-request-draft) Create as draft', id: 'draft' }, { label: '$(close) Cancel', id: 'cancel' }],
       { placeHolder: summary }
     );
-    if (!fpick || fpick.id === 'cancel') return;
+    if (!fpick || fpick.id === 'cancel' || this.root !== root) return;
 
     let pr;
     try {
       pr = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Creating pull request…' }, () =>
-        this.integrations.createPullRequest(repo, { source, target: targetBranch, title: title.trim(), body, draft: fpick.id === 'draft' })
+        this.integrations.createPullRequest(repo, { source, target: targetBranch, title: title.trim(), body, draft: fpick.id === 'draft' }, root)
       );
     } catch (e) {
       return void vscode.window.showErrorMessage(`gitSt8: ${errText(e)}`);

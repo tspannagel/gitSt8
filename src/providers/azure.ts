@@ -128,7 +128,8 @@ export function createPullRequestBody(i: NewPullRequest): Record<string, unknown
 export function friendlyCreateError(e: unknown): Error {
   const msg = e instanceof Error ? e.message : String(e);
   if ((e instanceof HttpError && e.status === 409) || /TF401179/i.test(msg)) return new Error('A pull request for this branch already exists.');
-  if (e instanceof AuthError) return new Error('Azure DevOps refused to create the pull request. A personal access token needs the "Code (Read & write)" scope.');
+  if (e instanceof AuthError) return new AuthError('Azure DevOps rejected the credentials. Sign in again or replace the PAT; a PAT also needs "Code (Read & write)" for PR creation.');
+  if (e instanceof HttpError && e.status === 403) return new HttpError('Azure DevOps denied PR creation (403). Check project/repository write permissions; a PAT needs "Code (Read & write)".', 403);
   return e instanceof Error ? e : new Error(msg);
 }
 

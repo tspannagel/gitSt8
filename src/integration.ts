@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import { Accounts, AccountAuth, accountScope, Session } from './accounts';
+import { HttpError } from './providers/http';
 import { RemoteInfo } from './git';
 import { AZURE_DEVOPS_SCOPE, AzureDevOpsClient, listOrganizations, listRepositories, resourceTenant } from './providers/azure';
 import { parseRemoteUrl, repoLabel } from './providers/detect';
@@ -16,6 +18,7 @@ export interface IntegrationState {
   prsUrl: string;
   signedIn: boolean;
   error?: string;
+  account?: string;
   statuses: Record<string, CiStatus>;
   prs: PullRequest[];
 }
@@ -37,21 +40,21 @@ const providerName = (p: ProviderId) => (p === 'github' ? 'GitHub' : 'Azure DevO
  * Sign-in uses VS Code's built-in accounts (GitHub, Microsoft); Azure DevOps can also use a PAT.
  */
 export class Integrations {
-  private readonly github = new GitHubClient(host => this.githubAuth(host));
-  private readonly azure = new AzureDevOpsClient(repo => this.azureAuth(repo.owner, false));
+  private readonly accounts: Accounts;
+  private generation = 0;
   private readonly statusCache = new Map<string, Cached<CiStatus | null>>();
   private readonly prCache = new Map<string, Cached<PullRequest[]>>();
-  /** Providers the user explicitly asked to sign in to during this load. */
-  private interactive = new Set<ProviderId>();
   /** Entra tenant per Azure DevOps organization (undefined: Microsoft-account org or unknown). */
   private readonly tenants = new Map<string, string | undefined>();
-  /** Microsoft account used for the last Azure DevOps token, to name it when the service refuses it. */
-  private azureAccount?: string;
+  private readonly tenantRequests = new Map<string, Promise<string | undefined>>();
   private readonly changed = new vscode.EventEmitter<void>();
   readonly onDidChange = this.changed.event;
   private readonly disposables: vscode.Disposable[] = [this.changed];
 
-  constructor(private readonly secrets: vscode.SecretStorage) {
+  constructor(private readonly secrets: vscode.SecretStorage, workspaceState: vscode.Memento) {
+    // Newer stable VS Code supports getAccounts/account. Keep the 1.90 typings and fail closed
+    // on older hosts rather than silently replacing a repository's associated identity.
+    this.accounts = new Accounts(workspaceState, vscode.authentication as unknown as AccountAuth);
     this.disposables.push(
       vscode.authentication.onDidChangeSessions(e => {
         if (['github', 'github-enterprise', 'microsoft'].includes(e.provider.id)) this.invalidate();
@@ -93,47 +96,42 @@ export class Integrations {
 
   // ---------------------------------------------------------------- auth
 
-  private async githubAuth(host: string, interactive = false): Promise<string> {
-    const ask = interactive || this.interactive.has('github');
-    const providerId = host === 'github.com' ? 'github' : 'github-enterprise';
-    const session = await vscode.authentication.getSession(providerId, ['repo'], ask ? { createIfNone: true } : { silent: true });
-    if (!session) throw new AuthError('Not signed in to GitHub.');
-    return `Bearer ${session.accessToken}`;
+  private async azurePat(org: string): Promise<string | undefined> {
+    return (org && await this.secrets.get(`${PAT_KEY}:${org.toLowerCase()}`)) || await this.secrets.get(PAT_KEY);
   }
 
-  /** `org` empty: any organization (the all-organizations PAT, or a token of the home tenant). */
-  private async azureAuth(org: string, interactive: boolean, pickAccount = true): Promise<string> {
-    const pat = (org && (await this.secrets.get(`${PAT_KEY}:${org.toLowerCase()}`))) || (await this.secrets.get(PAT_KEY));
-    if (pat) {
-      this.azureAccount = undefined;
-      return `Basic ${Buffer.from(`:${pat}`).toString('base64')}`;
-    }
-    const ask = interactive || this.interactive.has('azure');
-    const tenant = org ? await this.azureTenant(org) : undefined;
-    const scopes = [AZURE_DEVOPS_SCOPE, ...(tenant ? [`VSCODE_TENANT:${tenant}`] : [])];
-    // On an explicit sign-in, let the user pick the account instead of silently reusing the remembered one,
-    // which may be the wrong account and would make the button appear to do nothing.
-    const session = await vscode.authentication.getSession('microsoft', scopes, ask ? { createIfNone: true, clearSessionPreference: pickAccount } : { silent: true });
-    this.azureAccount = session?.account.label;
-    if (!session) throw new AuthError('Not signed in to Azure DevOps.');
-    return `Bearer ${session.accessToken}`;
-  }
-
-  /** Entra tenant of an Azure DevOps organization, looked up once. Lookup failures are retried on the next load. */
-  private async azureTenant(org: string): Promise<string | undefined> {
+  /** Tenant discovery is unauthenticated, deduplicated, and failures never select the home tenant. */
+  private azureTenant(org: string): Promise<string | undefined> {
     const key = org.toLowerCase();
-    if (this.tenants.has(key)) return this.tenants.get(key);
-    try {
-      const tenant = await resourceTenant(org);
+    if (this.tenants.has(key)) return Promise.resolve(this.tenants.get(key));
+    const hit = this.tenantRequests.get(key);
+    if (hit) return hit;
+    const request = resourceTenant(org).then(tenant => {
       this.tenants.set(key, tenant);
       return tenant;
-    } catch {
-      return undefined;
-    }
+    }, () => { throw new Error(`Could not resolve the Entra tenant for '${org}'. Retry or use an organization PAT.`); });
+    this.tenantRequests.set(key, request);
+    void request.finally(() => this.tenantRequests.delete(key)).catch(() => undefined);
+    return request;
   }
 
-  async signIn(provider: ProviderId): Promise<void> {
-    this.interactive.add(provider);
+  private async credentials(repo: RepoRef, root?: string, action: 'silent' | 'signin' | 'change' | 'default' = 'silent'): Promise<{ header: string; label: string; pat: boolean }> {
+    if (repo.provider === 'azure') {
+      const pat = await this.azurePat(repo.owner);
+      if (pat) {
+        if (action === 'change' || action === 'default') throw new Error('An Azure DevOps PAT takes precedence over accounts. Remove the organization PAT and/or all-organizations PAT using gitSt8: Remove Azure DevOps Personal Access Token, then choose an account.');
+        return { header: `Basic ${Buffer.from(`:${pat}`).toString('base64')}`, label: 'Azure DevOps PAT', pat: true };
+      }
+    }
+    const tenant = repo.provider === 'azure' && repo.owner ? await this.azureTenant(repo.owner) : undefined;
+    const provider = repo.provider === 'azure' ? 'microsoft' : repo.host === 'github.com' ? 'github' : 'github-enterprise';
+    const scopes = repo.provider === 'azure' ? [AZURE_DEVOPS_SCOPE, ...(tenant ? [`VSCODE_TENANT:${tenant}`] : [])] : ['repo'];
+    const session: Session = await this.accounts.session(provider, scopes, accountScope(repo, tenant), root, action);
+    return { header: `Bearer ${session.accessToken}`, label: session.account.label, pat: false };
+  }
+
+  async signIn(repo: RepoRef, root?: string, action: 'signin' | 'change' | 'default' = 'signin'): Promise<void> {
+    await this.credentials(repo, root, action);
     this.invalidate();
   }
 
@@ -157,6 +155,7 @@ export class Integrations {
   }
 
   invalidate(): void {
+    this.generation++;
     this.statusCache.clear();
     this.prCache.clear();
     this.changed.fire();
@@ -166,45 +165,57 @@ export class Integrations {
 
   /** GitHub repositories of the signed-in account on `host` (github.com or a GitHub Enterprise host). */
   async githubRepos(host: string): Promise<HostedRepo[]> {
-    await this.githubAuth(host, true);
-    return this.github.repositories(host);
+    const repo: RepoRef = { provider: 'github', host, owner: '', repo: '', webUrl: `https://${host}` };
+    const auth = await this.credentials(repo, undefined, 'signin');
+    return new GitHubClient(async () => auth.header).repositories(host);
   }
 
-  /** Azure DevOps organizations of the signed-in account. Lets the user pick the Microsoft account. */
   async azureOrganizations(): Promise<string[]> {
-    return listOrganizations(await this.azureAuth('', true));
+    return listOrganizations((await this.credentials({ provider: 'azure', host: 'dev.azure.com', owner: '', repo: '', webUrl: '' }, undefined, 'signin')).header);
   }
 
   async azureRepos(org: string): Promise<HostedRepo[]> {
-    return listRepositories(org, await this.azureAuth(org, true, false));
+    const repo: RepoRef = { provider: 'azure', host: 'dev.azure.com', owner: org, repo: '', webUrl: '' };
+    return listRepositories(org, (await this.credentials(repo, undefined, 'signin')).header);
   }
 
   // ---------------------------------------------------------------- writes
 
-  /** Opens a pull request. Only call on explicit user action. Signs in interactively if needed. */
-  async createPullRequest(repo: RepoRef, input: NewPullRequest): Promise<PullRequest> {
-    this.interactive.add(repo.provider);
+  /** One explicit authentication, reused across all requests in this operation. */
+  async createPullRequest(repo: RepoRef, input: NewPullRequest, root?: string): Promise<PullRequest> {
+    const auth = await this.credentials(repo, root, 'signin');
     try {
-      const pr = await this.client(repo.provider).createPullRequest(repo, input);
+      const pr = await this.client(repo.provider, auth.header).createPullRequest(repo, input);
       this.invalidate();
       return pr;
-    } finally {
-      this.interactive.delete(repo.provider);
+    } catch (e) {
+      throw new Error(this.failure(e, repo, auth));
     }
   }
 
   // ---------------------------------------------------------------- data
 
-  private client(p: ProviderId): ProviderClient {
-    return p === 'github' ? this.github : this.azure;
+  private client(p: ProviderId, header: string): ProviderClient {
+    return p === 'github' ? new GitHubClient(async () => header) : new AzureDevOpsClient(async () => header);
+  }
+
+  private failure(e: unknown, repo: RepoRef, auth?: { label: string; pat: boolean }): string {
+    const message = e instanceof Error ? e.message : String(e);
+    if (auth?.pat && (e instanceof AuthError || e instanceof HttpError && e.status === 403)) {
+      return `${message} Azure DevOps PAT takes precedence over Microsoft accounts. Check expiry, organization access and Code read / Build read scopes (Code Read & write for PR creation), or replace/remove the organization or all-organizations PAT.`;
+    }
+    if (e instanceof AuthError || e instanceof HttpError && e.status === 403) {
+      return `${message}${auth ? ` Using ${auth.label} for ${providerName(repo.provider)} '${repoLabel(repo)}'.` : ''} ${e instanceof AuthError ? 'Sign in or change account for this repository.' : 'Check repository/project permissions and token scopes, organization membership and SSO authorization, or change account for this repository.'}`;
+    }
+    return message;
   }
 
   /**
    * Loads PRs and CI status for `shas`. Cached results are reused; only stale or unknown commits are requested.
    * Never throws: problems are reported in `error` / `signedIn`.
    */
-  async load(remote: string, repo: RepoRef, shas: string[], force = false): Promise<IntegrationState> {
-    const key = repoLabel(repo).toLowerCase();
+  async load(remote: string, repo: RepoRef, shas: string[], force = false, root?: string): Promise<IntegrationState> {
+    const key = JSON.stringify([root, repo.provider, repo.host.toLowerCase(), repoLabel(repo).toLowerCase(), this.generation]);
     const state: IntegrationState = {
       provider: repo.provider,
       remote,
@@ -216,11 +227,14 @@ export class Integrations {
       statuses: {},
       prs: [],
     };
-    const client = this.client(repo.provider);
+    let auth: { header: string; label: string; pat: boolean } | undefined;
     const now = Date.now();
     // Drop entries no TTL would accept any more, so the cache does not grow with every commit ever shown.
     for (const [k, v] of this.statusCache) if (now - v.at > STATUS_TTL_MS) this.statusCache.delete(k);
     try {
+      auth = await this.credentials(repo, root);
+      state.account = auth.label;
+      const client = this.client(repo.provider, auth.header);
       const prHit = this.prCache.get(key);
       if (!force && prHit && now - prHit.at < PR_TTL_MS) state.prs = prHit.value;
       else {
@@ -245,15 +259,8 @@ export class Integrations {
       }
       for (const pr of state.prs) if (!pr.ci && pr.headSha && state.statuses[pr.headSha]) pr.ci = state.statuses[pr.headSha].state;
     } catch (e) {
-      if (e instanceof AuthError) {
-        state.signedIn = false;
-        const account = repo.provider === 'azure' && this.azureAccount ? ` Signed in as ${this.azureAccount}; this account may have no access to '${repo.owner}'.` : '';
-        state.error = this.interactive.has(repo.provider) ? e.message + account : `Sign in to ${providerName(repo.provider)} to see pull requests and pipeline status.`;
-      } else {
-        state.error = e instanceof Error ? e.message : String(e);
-      }
-    } finally {
-      this.interactive.delete(repo.provider);
+      state.signedIn = !(e instanceof AuthError);
+      state.error = this.failure(e, repo, auth);
     }
     return state;
   }

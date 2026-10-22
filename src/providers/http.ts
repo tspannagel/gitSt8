@@ -30,10 +30,10 @@ export async function requestJson<T>(url: string, auth: string, init: { method?:
   }
   const type = res.headers.get('content-type') || '';
   if (res.status === 401 || res.status === 403) {
-    const detail = await res.text().catch(() => '');
-    // GitHub uses 403 for rate limits too; that is not an auth problem.
-    if (res.headers.get('x-ratelimit-remaining') === '0') throw new HttpError('API rate limit reached. Try again later.', res.status);
-    throw new AuthError(`Not authorized (${res.status}). ${shorten(detail)}`);
+    // GitHub uses 403 for rate limits too; that is not a credentials problem.
+    if (res.headers.get('x-ratelimit-remaining') === '0') throw new HttpError('API rate limit reached. Try again later.', 429);
+    if (res.status === 401) throw new AuthError('Credentials rejected (401): sign in again or replace the expired/invalid token.');
+    throw new HttpError('Insufficient permissions (403): check repository access, token scopes and organization SSO authorization.', 403);
   }
   // Azure DevOps answers an invalid token with 203 and an HTML sign-in page.
   if (res.status === 203 || (res.ok && !type.includes('json'))) {

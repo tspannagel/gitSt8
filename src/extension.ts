@@ -14,7 +14,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   }
   const exports = gitExt.isActive ? gitExt.exports : await gitExt.activate();
   const api: API = exports.getAPI(1);
-  const integrations = new Integrations(context.secrets);
+  const integrations = new Integrations(context.secrets, context.workspaceState);
   const show = (root?: string) => RepoPanel.show(context, api, integrations, root);
 
   const repoFromArg = (arg: unknown): string | undefined => {
@@ -159,8 +159,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       );
     }),
 
-    vscode.commands.registerCommand('gitst8.signInGitHub', () => integrations.signIn('github')),
-    vscode.commands.registerCommand('gitst8.signInAzure', () => integrations.signIn('azure')),
+    vscode.commands.registerCommand('gitst8.signInGitHub', async () => {
+      const panel = await show();
+      await panel.ready;
+      await panel.on_signIn({ provider: 'github' });
+    }),
+    vscode.commands.registerCommand('gitst8.signInAzure', async () => {
+      const panel = await show();
+      await panel.ready;
+      await panel.on_signIn({ provider: 'azure' });
+    }),
     vscode.commands.registerCommand('gitst8.setAzurePat', async () => {
       const scope = await vscode.window.showQuickPick(
         [

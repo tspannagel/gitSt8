@@ -760,17 +760,18 @@ Clone or initialize another repository from this list.`.trim();
     const p = PROVIDER[st.provider];
     el.hidden = false;
     el.className = `integ ${st.signedIn ? '' : 'signed-out'} ${st.error && st.signedIn ? 'has-error' : ''}`;
+    el.title = `${p.name}: ${st.label} (remote '${st.remote}')${st.account ? ` · ${st.account}` : ''}${st.error ? `\n${st.error}` : ''}`;
     if (!st.signedIn) {
       el.innerHTML = `${ic(p.icon)}<span class="lbl">${esc(st.label)}</span>
         <button class="tb" data-signin="${st.provider}" title="${esc(st.error || '')}">${ic('sign-in', 'sm')}Sign in</button>
-        ${st.provider === 'azure' ? `<button class="tb" data-setpat="${esc(st.label.split('/')[0])}" title="Use a personal access token instead">Use token…</button>` : ''}`;
+        ${st.provider === 'azure' ? `<button class="tb" data-setpat="${esc(st.label.split('/')[0])}" title="Use a personal access token instead">Use token…</button>` : ''}
+        <span class="hbtn" data-integmenu="1" title="Account and provider actions">${ic('ellipsis', 'sm')}</span>`;
       return;
     }
     const open = st.prs.length;
     el.innerHTML = `${ic(p.icon)}<span class="lbl">${esc(st.label)}</span>${
       st.error ? `<span title="${esc(st.error)}">${ic('warning', 'sm')}</span>` : `<span class="prcount" title="${open} open pull request(s)">${ic('git-pull-request', 'sm')}${open}</span>`
     }<span class="hbtn" data-integmenu="1" title="More">${ic('ellipsis', 'sm')}</span>`;
-    el.title = `${p.name}: ${st.label} (remote '${st.remote}')${st.error ? `\n${st.error}` : ''}`;
   }
 
   function integrationMenu() {
@@ -785,6 +786,8 @@ Clone or initialize another repository from this list.`.trim();
       ...st.prs.slice(0, 15).map(pr => ({ label: `#${pr.number} ${pr.title.slice(0, 60)}`, icon: pr.isDraft ? 'git-pull-request-draft' : 'git-pull-request', run: () => post('openExternal', { url: pr.url }) })),
       ...(st.prs.length ? ['-'] : []),
       { label: 'Refresh status', icon: 'refresh', run: () => post('refreshIntegration') },
+      { label: 'Change account for this repository', icon: 'sign-in', run: () => post('changeIntegrationAccount') },
+      { label: 'Set workspace default account', icon: 'sign-in', run: () => post('setWorkspaceDefaultAccount') },
       ...(st.provider === 'azure' ? [{ label: 'Use a personal access token…', icon: 'sign-in', run: () => post('setAzurePat', { org: st.label.split('/')[0] }) }] : []),
     ];
   }
@@ -1895,7 +1898,7 @@ Clone or initialize another repository from this list.`.trim();
     const setPat = t.closest('[data-setpat]');
     if (setPat) return post('setAzurePat', { org: setPat.dataset.setpat });
     const integ = t.closest('#integration');
-    if (integ && S.integration?.signedIn) {
+    if (integ && S.integration) {
       const r = integ.getBoundingClientRect();
       return showMenu(r.left, r.bottom, integrationMenu());
     }
@@ -2075,7 +2078,7 @@ Clone or initialize another repository from this list.`.trim();
     if (tbBtn) items = S.data ? toolbarMenu(tbBtn.dataset.cmd) : null;
     else if (prEl) items = prMenu(prEl.dataset.pr);
     else if (ciEl) items = ciMenu(ciEl.dataset.ci);
-    else if (t.closest('#integration') && S.integration?.signedIn) items = integrationMenu();
+    else if (t.closest('#integration') && S.integration) items = integrationMenu();
     else if (badge && badge.dataset.badge !== 'head' && badge.dataset.badge !== 'bisect') items = refMenu(badge.dataset.badge, badge.dataset);
     else if (item) items = refMenu(item.dataset.ref, item.dataset);
     else if (group) items = remoteMenu(group.dataset.remotegroup);

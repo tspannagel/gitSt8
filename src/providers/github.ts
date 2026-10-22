@@ -133,8 +133,8 @@ export function createPullRequestVariables(repositoryId: string, i: NewPullReque
 export function friendlyCreateError(e: unknown): Error {
   const msg = e instanceof Error ? e.message : String(e);
   if (/pull request already exists/i.test(msg)) return new Error('A pull request for this branch already exists.');
-  if (e instanceof AuthError) return new Error('GitHub refused to create the pull request. The sign-in needs the "repo" scope and write access to the repository.');
-  if (e instanceof HttpError && (e.status === 401 || e.status === 403)) return new Error('GitHub refused to create the pull request: the token needs the "repo" scope.');
+  if (e instanceof AuthError) return new AuthError('GitHub rejected the credentials. Sign in again; PR creation also needs the "repo" scope and repository write access.');
+  if (e instanceof HttpError && e.status === 403) return new HttpError('GitHub denied PR creation (403). Check repository write access, the "repo" scope and organization SSO authorization.', 403);
   return e instanceof Error ? e : new Error(msg);
 }
 
@@ -174,11 +174,13 @@ export class GitHubClient implements ProviderClient {
   constructor(private readonly auth: (host: string) => Promise<AuthHeader>) {}
 
   private async graphql<T>(host: string, query: string, variables: Record<string, unknown>): Promise<T> {
-    const res = await requestJson<{ data?: T; errors?: { message: string }[] }>(apiUrl(host), await this.auth(host), {
+    const res = await requestJson<{ data?: T; errors?: { message: string; type?: string }[] }>(apiUrl(host), await this.auth(host), {
       method: 'POST',
       body: { query, variables },
     });
-    if (!res.data) throw new Error(res.errors?.map(e => e.message).join('; ') || 'GitHub returned no data');
+    if (res.errors?.some(e => e.type === 'UNAUTHORIZED')) throw new AuthError('GitHub rejected the credentials. Sign in again.');
+    if (res.errors?.some(e => e.type === 'FORBIDDEN' || e.type === 'NOT_FOUND')) throw new HttpError('GitHub repository data is inaccessible. Check repository permissions and organization SSO authorization.', 403);
+    if (res.errors?.length || !res.data) throw new Error(res.errors?.map(e => e.message).join('; ') || 'GitHub returned no data');
     return res.data;
   }
 
@@ -195,7 +197,8 @@ export class GitHubClient implements ProviderClient {
       }
     }`;
     const data = await this.graphql<{ repository: { pullRequests: { nodes: GqlPr[] } } | null }>(repo.host, q, { owner: repo.owner, name: repo.repo });
-    return (data.repository?.pullRequests.nodes || []).map(mapPullRequest);
+    if (!data.repository) throw new HttpError('GitHub repository not found or not accessible to this account. Check repository access and organization SSO authorization.', 403);
+    return data.repository.pullRequests.nodes.map(mapPullRequest);
   }
 
   /** Repositories the signed-in user owns, collaborates on or sees through an organization; recently pushed first. */
