@@ -6,6 +6,7 @@ import { Submodule, mergeSubmodules, parseGitlinks, parseGitmodules, parseSubmod
 import { LogFilter, authorArgs, buildFilterArgs } from './logFilter';
 import { Signature, mapSignature } from './signature';
 import { FileDiff, parseDiff } from './hunks';
+import { ConfigEntry, ConfigScope, globalConfigPath, isValidConfigKey, parseConfigList } from './gitConfig';
 
 const FS = '\x1f';
 const RS = '\x1e';
@@ -677,6 +678,49 @@ export class GitCli {
     if (mode.cached) args.push('--cached');
     if (mode.reverse) args.push('--reverse');
     await this.run([...args, '-'], { input: patch });
+  }
+
+  // ---- config
+
+  /** Entries of one scope in file order, or with no scope every entry git sees (each with its scope, last wins). */
+  async configList(scope?: ConfigScope): Promise<ConfigEntry[]> {
+    try {
+      const out = await this.run(scope ? ['config', `--${scope}`, '--list', '-z'] : ['config', '--list', '--show-scope', '-z']);
+      return parseConfigList(out, !scope);
+    } catch (e) {
+      // A global config file that does not exist yet is simply empty.
+      if (e instanceof GitError && /unable to read config file/i.test(e.message)) return [];
+      throw e;
+    }
+  }
+
+  /**
+   * Sets `key` in `scope`. `old` replaces only the entries with exactly that value (one value of a multi-valued key);
+   * `add` appends another value; otherwise every value of the key is replaced by this one.
+   * The key comes first, so later arguments are never parsed as options even when they start with `-`.
+   */
+  async configSet(scope: ConfigScope, key: string, value: string, opts: { old?: string | null; add?: boolean } = {}): Promise<void> {
+    if (!isValidConfigKey(key)) throw new Error(`Not a valid config key: ${key}`);
+    if (opts.add) await this.run(['config', `--${scope}`, '--add', key, value]);
+    else if (opts.old != null) await this.run(['config', `--${scope}`, '--fixed-value', '--replace-all', key, value, opts.old]);
+    else await this.run(['config', `--${scope}`, '--replace-all', key, value]);
+  }
+
+  /** Removes `key` from `scope`: only the entries with exactly `value` when given, else all of them. Missing keys are fine. */
+  async configUnset(scope: ConfigScope, key: string, value?: string | null): Promise<void> {
+    if (!isValidConfigKey(key)) throw new Error(`Not a valid config key: ${key}`);
+    const args = value != null ? ['config', `--${scope}`, '--fixed-value', '--unset-all', key, value] : ['config', `--${scope}`, '--unset-all', key];
+    try {
+      await this.run(args);
+    } catch (e) {
+      if (!(e instanceof GitError && e.exitCode === 5)) throw e;
+    }
+  }
+
+  /** The file a scope is stored in. */
+  async configFile(scope: ConfigScope): Promise<string> {
+    if (scope === 'global') return globalConfigPath();
+    return path.resolve(this.root, (await this.run(['rev-parse', '--git-path', 'config'])).trim());
   }
 }
 

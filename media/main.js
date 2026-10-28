@@ -27,7 +27,7 @@
     'debug-rerun': 0xebc0, rocket: 0xeb44, sparkle: 0xec10, 'stop-circle': 0xeba5,
     'list-flat': 0xeb84, 'file-code': 0xeae9, save: 0xeb4b, link: 0xeb15,
     'file-submodule': 0xeaec, database: 0xeace,
-    'verified-filled': 0xebe9, unverified: 0xeb76, question: 0xeb32,
+    'verified-filled': 0xebe9, unverified: 0xeb76, question: 0xeb32, 'settings-gear': 0xeb51,
   };
   const ic = (name, cls = '') => `<i class="ci ${cls}" aria-hidden="true">${ICONS[name] ? String.fromCharCode(ICONS[name]) : ''}</i>`;
   const fillIcons = (root = document) =>
@@ -52,7 +52,7 @@
   };
 
   const post = (type, extra = {}) => vscode.postMessage({ type, ...extra });
-  const persist = () => vscode.setState({ collapsed: S.collapsed, detailsHeight: S.detailsHeight, detailsWidth: S.detailsWidth, rawBody: S.rawBody });
+  const persist = () => vscode.setState({ collapsed: S.collapsed, detailsHeight: S.detailsHeight, detailsWidth: S.detailsWidth, layoutV: 2, rawBody: S.rawBody });
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const short = s => (s && /^[0-9a-f]{40}$/.test(s) ? s.slice(0, 7) : s);
   const normPath = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
@@ -158,9 +158,20 @@
       case 'irebase':
         openRebaseEditor(m);
         break;
+      case 'config':
+        openConfigEditor(m);
+        break;
       case 'aiAvailable':
+        S.aiEnabled = m.enabled !== false;
         S.aiAvailable = !!m.available;
+        S.aiModels = m.models || [];
+        S.aiSelected = m.selected || '';
+        S.aiEffective = m.effective || '';
         if (S.details?.kind === 'wip') renderDetails();
+        break;
+      case 'commitMsgModel':
+        if (S.aiGen) S.aiGen.model = m.model;
+        updateAiStatus();
         break;
       case 'commitMsgChunk':
         if (!S.aiGen) break;
@@ -171,6 +182,7 @@
         const g = S.aiGen;
         S.aiGen = null;
         if (g && !m.cancelled && m.text) setGeneratedMessage(m.text);
+        if (g?.model && !m.cancelled && m.text) S.aiLast = g.model;
         if (S.details?.kind === 'wip') renderDetails();
         break;
       }
@@ -1061,26 +1073,30 @@ Clone or initialize another repository from this list.`.trim();
     const nUnstaged = d.unstaged.length;
     const canAmend = d.headRef === 'HEAD';
     const label = S.amend ? (nStaged ? `Amend with ${nStaged} staged file(s)` : 'Amend last commit') : nStaged ? `Commit ${nStaged} staged file(s)` : nUnstaged ? `Stage all ${nUnstaged} & commit` : 'Nothing to commit';
+    const aiOn = S.aiEnabled !== false || S.aiGen;
     el.innerHTML = `<div class="wip">
       <div class="commitbox">
-        <div class="d-subject">Commit to ${esc(d.branch || 'detached HEAD')}</div>
-        <div class="msgrow">
-          <textarea id="commitMsg" placeholder="Message (${MOD}+Enter to commit)">${esc(S.commitMsg || '')}</textarea>
-          ${S.aiAvailable || S.aiGen ? `<button class="icon-btn" data-ai="1" title="${S.aiGen ? 'Stop generating' : 'Generate commit message with a language model. Your diff is sent to the model provider (e.g. GitHub Copilot) only when you click this.'}">${ic(S.aiGen ? 'stop-circle' : 'sparkle')}</button>` : ''}
+        <div class="cb-head"><span class="cb-title">${S.amend ? 'Amend' : 'Commit'}</span>
+          <span class="cb-branch" title="Current branch">${ic('git-branch', 'xs')}${esc(d.branch || 'detached HEAD')}</span>
+          <span class="cb-meta" id="cbMeta">${msgMetaHtml(S.commitMsg)}</span></div>
+        <div class="cb-msg">
+          <textarea id="commitMsg" rows="${msgRows(S.commitMsg)}" placeholder="Message (${MOD}+Enter to commit)">${esc(S.commitMsg || '')}</textarea>
+          ${aiOn ? aiButtonHtml() : ''}
         </div>
         <div class="ai-error" id="aiError" hidden></div>
-        <div class="opts">
-          <label class="check" title="${canAmend ? 'Replace the last commit' : 'No commit yet'}"><input type="checkbox" id="amend" ${S.amend ? 'checked' : ''} ${canAmend ? '' : 'disabled'}> Amend last commit</label>
+        <div class="cb-actions">
+          <button class="primary cb-commit" data-commit="1" ${!nStaged && !nUnstaged && !S.amend ? 'disabled' : ''}>${ic('check')}${label}</button>
+          <label class="check" title="${canAmend ? 'Replace the last commit' : 'No commit yet'}"><input type="checkbox" id="amend" ${S.amend ? 'checked' : ''} ${canAmend ? '' : 'disabled'}> Amend</label>
           <label class="check" title="git commit --no-verify"><input type="checkbox" id="noVerify" ${S.noVerify ? 'checked' : ''}> Skip hooks</label>
         </div>
-        <button class="primary" data-commit="1" ${!nStaged && !nUnstaged && !S.amend ? 'disabled' : ''}>${ic('check')}${label}</button>
+        ${aiOn ? `<div class="cb-model" id="aiStatus">${aiStatusHtml()}</div>` : ''}
       </div>
       <div class="changes">
         ${d.conflicts.length ? `<div class="grp-head conflict">Merge conflicts (${d.conflicts.length})</div>
           ${fileList(d.conflicts, d.headRef, null, [{ act: 'open', icon: 'go-to-file', title: 'Open file' }, { act: 'resolved', icon: 'check', title: 'Mark resolved (stage)' }])}` : ''}
         <div class="grp-head">Staged changes (${nStaged}) ${nStaged ? '<button class="link" data-wip="unstageAll">unstage all</button>' : ''}</div>
         ${nStaged ? fileList(d.staged, d.headRef, 'INDEX', [{ act: 'unstage', icon: 'remove', title: 'Unstage' }], 'staged') : '<div class="empty">Nothing staged.</div>'}
-        <div class="grp-head">Changes (${nUnstaged}) ${nUnstaged ? '<button class="link" data-wip="stageAll">stage all</button> <button class="link danger" data-wip="discardAll">discard all…</button>' : ''}</div>
+        <div class="grp-head">Changes (${nUnstaged}) ${nUnstaged ? '<button class="link" data-wip="stageAll">stage all</button> <button class="link" data-wip="stashAll" title="git stash push --include-untracked: staged, unstaged and untracked changes">stash all…</button> <button class="link danger" data-wip="discardAll">discard all…</button>' : ''}</div>
         ${nUnstaged
           ? fileList(d.unstaged, 'INDEX', null, [
               { act: 'open', icon: 'go-to-file', title: 'Open file', when: f => f.status !== 'D' },
@@ -1099,6 +1115,67 @@ Clone or initialize another repository from this list.`.trim();
     }
   }
 
+  /** Rows for the message box: one line when empty, growing with the text up to 12 (the user can still drag it bigger). */
+  const msgRows = msg => Math.min(12, Math.max(1, String(msg || '').split('\n').length));
+  function growMsgBox(ta) {
+    if (!ta.style.height) ta.rows = Math.max(ta.rows, msgRows(ta.value));
+  }
+
+  /** Subject length (72 is the usual limit) and body size; empty while there is no message. */
+  function msgMetaHtml(msg) {
+    if (!String(msg || '').trim()) return '';
+    const lines = String(msg).split('\n');
+    const subj = lines[0].length;
+    const body = lines.slice(1).filter(l => l.trim()).length;
+    const cls = subj > 72 ? 'over' : subj > 50 ? 'warn' : '';
+    return `<span class="${cls}" title="Subject length: keep it at 50–72 characters">${subj}/72</span>${body ? `<span>+${body} line${body === 1 ? '' : 's'}</span>` : ''}`;
+  }
+
+  const VENDOR_NAMES = { copilot: 'GitHub Copilot', anthropic: 'Anthropic', openai: 'OpenAI', azure: 'Azure OpenAI', google: 'Google', ollama: 'Ollama' };
+  const vendorName = v => VENDOR_NAMES[String(v || '').toLowerCase()] || v || 'unknown provider';
+  const modelLabel = m => (m ? `${m.name || m.family || m.id} (${vendorName(m.vendor)})` : '');
+  const modelById = id => (S.aiModels || []).find(m => m.id === id);
+  const fmtTokens = n => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n || '?'));
+
+  /** Sparkle button beside the message box: generate, or stop while generating. */
+  function aiButtonHtml() {
+    const has = (S.aiModels || []).length > 0;
+    const cur = modelById(S.aiSelected) || modelById(S.aiEffective);
+    const tip = S.aiGen
+      ? 'Stop generating'
+      : has
+        ? `Generate a message with ${modelLabel(cur) || 'a language model'}. Your diff is sent to ${vendorName(cur?.vendor)} only when you click this.`
+        : 'No language model available';
+    return `<button class="cb-ai" data-ai="1" ${has || S.aiGen ? '' : 'disabled'} title="${esc(tip)}">${ic(S.aiGen ? 'stop-circle' : 'sparkle')}</button>`;
+  }
+
+  /** One quiet line under the commit button: the model picker, progress while generating, or a hint when there is no model. */
+  function aiStatusHtml() {
+    if (S.aiGen) return `${ic('sync', 'xs')}${S.aiGen.model ? `Generating with ${esc(modelLabel(S.aiGen.model))}…` : 'Preparing diff…'}`;
+    const models = S.aiModels || [];
+    if (!models.length) return S.aiAvailable === undefined ? '' : `${ic('sparkle', 'xs')}No language model available. Install GitHub Copilot (or another provider) and sign in.`;
+    const auto = modelById(S.aiEffective);
+    const vendors = [...new Set(models.map(m => m.vendor))];
+    const opts = vendors
+      .map(v => `<optgroup label="${esc(vendorName(v))}">${models
+        .filter(m => m.vendor === v)
+        .map(m => `<option value="${esc(m.id)}" ${m.id === S.aiSelected ? 'selected' : ''}>${esc(modelLabel(m))} · ${fmtTokens(m.maxInputTokens)} tokens</option>`)
+        .join('')}</optgroup>`)
+      .join('');
+    const missing = S.aiSelected && !modelById(S.aiSelected) ? `<option value="${esc(S.aiSelected)}" selected>${esc(S.aiSelected)} (not available)</option>` : '';
+    const last = S.aiLast ? `Last draft by ${modelLabel(S.aiLast)}. ` : '';
+    return `${ic('sparkle', 'xs')}<select id="aiModel" title="${esc(last)}Language model for the sparkle button. Saved as gitst8.ai.model.">
+        <option value="" ${S.aiSelected ? '' : 'selected'}>Auto${auto ? ` (${esc(modelLabel(auto))})` : ''}</option>${missing}${opts}
+      </select>`;
+  }
+
+  function updateAiStatus() {
+    const el = $('#aiStatus');
+    if (el) el.innerHTML = aiStatusHtml();
+    const btn = $('.cb-ai');
+    if (btn) btn.outerHTML = aiButtonHtml();
+  }
+
   /**
    * Shows generated text in the commit box (and S.commitMsg, so the draft survives refreshes).
    * An empty box is replaced; a box with a draft keeps it and gets the generated text below a separator line.
@@ -1110,8 +1187,11 @@ Clone or initialize another repository from this list.`.trim();
     const ta = $('#commitMsg');
     if (ta) {
       ta.value = S.commitMsg;
+      growMsgBox(ta);
       ta.scrollTop = ta.scrollHeight;
     }
+    const meta = $('#cbMeta');
+    if (meta) meta.innerHTML = msgMetaHtml(S.commitMsg);
   }
 
   function showAiError() {
@@ -1856,6 +1936,227 @@ Clone or initialize another repository from this list.`.trim();
     modal.hidden = false;
   }
 
+  // ------------------------------------------------------------------ git config editor
+
+  // Lowest to highest precedence; a later scope overrides an earlier one.
+  const CFG_ORDER = ['system', 'global', 'local', 'worktree', 'command'];
+  const CFG_SCOPE_NAMES = { system: 'system', global: 'global', local: 'repository', worktree: 'worktree', command: 'command line' };
+  let cfg = null; // { scope, filter, data } while the dialog is open
+
+  /** git compares section and name case-insensitively, the subsection as written. */
+  const cfgId = key => {
+    const a = key.indexOf('.');
+    const b = key.lastIndexOf('.');
+    return a < 0 || a === b ? key.toLowerCase() : key.slice(0, a).toLowerCase() + key.slice(a, b) + key.slice(b).toLowerCase();
+  };
+  const cfgAll = (entries, key) => entries.filter(e => cfgId(e.key) === cfgId(key));
+  const cfgLast = (entries, key) => cfgAll(entries, key).pop();
+
+  /** Called for every `config` message: opens the dialog, or redraws it keeping scope, filter and focus. */
+  function openConfigEditor(m) {
+    const modal = $('#modal');
+    const reopen = !cfg || modal.hidden || !modal.querySelector('.cfg');
+    if (reopen) cfg = { scope: m.scopes.local ? 'local' : 'global', filter: '', addKey: '', addValue: '', addMulti: false };
+    if (!m.scopes[cfg.scope]) cfg.scope = 'global';
+    cfg.data = m;
+
+    // Redraws replace the markup: keep the focused field, and what is typed into it if not applied yet.
+    const active = document.activeElement;
+    const focus = modal.contains(active) ? active.dataset?.fid : null;
+    const typed = focus && active.matches('input[type=text], input[type=search]') ? { value: active.value, start: active.selectionStart, end: active.selectionEnd } : null;
+    drawConfig();
+    const el = focus && modal.querySelector(`[data-fid="${CSS.escape(focus)}"]`);
+    if (el) {
+      el.focus();
+      if (typed && el.value !== typed.value) {
+        el.value = typed.value;
+        el.setSelectionRange(typed.start, typed.end);
+      }
+    }
+    if (!reopen) return;
+
+    const set = extra => post('configSet', { scope: cfg.scope, ...extra });
+    const unset = extra => post('configUnset', { scope: cfg.scope, ...extra });
+    const entries = () => cfg.data.scopes[cfg.scope] || [];
+    modal.onclick = e => {
+      const t = e.target;
+      if (t === modal || t.closest('[data-cfg=close]')) return closeConfig();
+      const tab = t.closest('[data-cfgscope]');
+      if (tab && !tab.disabled) {
+        cfg.scope = tab.dataset.cfgscope;
+        return drawConfig();
+      }
+      if (t.closest('[data-cfg=file]')) return post('configOpenFile', { scope: cfg.scope });
+      const clear = t.closest('[data-cfgunset]');
+      if (clear) return unset({ key: clear.dataset.cfgunset });
+      const del = t.closest('[data-cfgdel]');
+      if (del) {
+        const en = entries()[+del.dataset.cfgdel];
+        return en && unset({ key: en.key, value: en.value });
+      }
+      if (t.closest('[data-cfg=add]')) return addEntry();
+    };
+    modal.onchange = e => {
+      const t = e.target;
+      if (t.dataset.cfgkey !== undefined) {
+        // A selector or input of a common setting: empty means "not set here".
+        const v = t.value;
+        return v === '' ? unset({ key: t.dataset.cfgkey }) : set({ key: t.dataset.cfgkey, value: v });
+      }
+      if (t.dataset.cfgedit !== undefined) {
+        const en = entries()[+t.dataset.cfgedit];
+        if (en && t.value !== (en.value ?? '')) set({ key: en.key, value: t.value, old: en.value });
+      }
+      if (t.id === 'cfgAddMulti') cfg.addMulti = t.checked;
+    };
+    modal.oninput = e => {
+      const t = e.target;
+      if (t.id === 'cfgFilter') {
+        cfg.filter = t.value;
+        return applyConfigFilter();
+      }
+      if (t.id === 'cfgAddKey') {
+        cfg.addKey = t.value;
+        fillValueSuggestions();
+        validateAdd();
+      }
+      if (t.id === 'cfgAddValue') cfg.addValue = t.value;
+    };
+    modal.onkeydown = e => {
+      if (e.key === 'Enter' && (e.target.id === 'cfgAddKey' || e.target.id === 'cfgAddValue')) addEntry();
+    };
+
+    function addEntry() {
+      const key = cfg.addKey.trim();
+      if (validateAdd() || !key) return;
+      set({ key, value: cfg.addValue, add: cfg.addMulti });
+      cfg.addKey = cfg.addValue = '';
+      $('#cfgAddKey').value = $('#cfgAddValue').value = '';
+    }
+    modal.hidden = false;
+    $('#cfgFilter')?.focus();
+  }
+
+  const CFG_KEY_RE = /^[A-Za-z][A-Za-z0-9-]*(\.[^\n]*)?\.[A-Za-z][A-Za-z0-9-]*$/;
+  function validateAdd() {
+    const key = cfg.addKey.trim();
+    const err = key && !CFG_KEY_RE.test(key) ? 'A key is section.name or section.subsection.name, e.g. core.autocrlf or remote.origin.url' : '';
+    const el = $('#modal .cfg .error');
+    if (el) el.textContent = err;
+    const btn = $('#modal [data-cfg=add]');
+    if (btn) btn.disabled = !!err || !key;
+    return err;
+  }
+
+  /** Value suggestions for the free-text row when the key is a known setting. */
+  function fillValueSuggestions() {
+    const s = cfg.data.settings.find(x => cfgId(x.key) === cfgId(cfg.addKey.trim()));
+    const list = $('#cfgValues');
+    if (list) list.innerHTML = (s?.options || []).map(o => `<option value="${esc(o)}"></option>`).join('');
+  }
+
+  function applyConfigFilter() {
+    const q = cfg.filter.trim().toLowerCase();
+    $('#modal').querySelectorAll('[data-cfgfind]').forEach(el => (el.hidden = !!q && !el.dataset.cfgfind.toLowerCase().includes(q)));
+    $('#modal').querySelectorAll('.cfg-group').forEach(g => (g.hidden = !g.querySelector('.cfg-row:not([hidden])')));
+  }
+
+  function closeConfig() {
+    cfg = null;
+    $('#modal').hidden = true;
+    $('#modal').innerHTML = '';
+  }
+
+  function drawConfig() {
+    const { data, scope } = cfg;
+    const mine = data.scopes[scope] || [];
+    const rank = CFG_ORDER.indexOf(scope);
+    const below = data.effective.filter(e => CFG_ORDER.indexOf(e.scope) < rank);
+    const above = data.effective.filter(e => CFG_ORDER.indexOf(e.scope) > rank);
+    const where = e => CFG_SCOPE_NAMES[e.scope] || e.scope;
+    const shown = v => (v === null ? 'true (no value)' : v === '' ? '(empty)' : v);
+
+    const settingRow = s => {
+      const all = cfgAll(mine, s.key);
+      const cur = all.length ? all[all.length - 1].value ?? 'true' : null;
+      const inherited = cfgLast(below, s.key);
+      const over = cfgLast(above, s.key);
+      const notSet = inherited ? `not set · inherits ${shown(inherited.value)} (${where(inherited)})` : 'not set · git default';
+      let control;
+      if (s.type === 'text') {
+        control = `<input type="text" data-cfgkey="${esc(s.key)}" data-fid="k:${esc(s.key)}" value="${esc(cur ?? '')}" placeholder="${esc(notSet)}">`;
+      } else {
+        const opts = [...s.options];
+        if (cur !== null && !opts.includes(cur)) opts.push(cur);
+        control = `<select data-cfgkey="${esc(s.key)}" data-fid="k:${esc(s.key)}">
+          <option value="" ${cur === null ? 'selected' : ''}>${esc(notSet)}</option>
+          ${opts.map(o => `<option value="${esc(o)}" ${o === cur ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`;
+      }
+      const notes = [];
+      if (all.length > 1) notes.push(`${all.length} values here, the last one wins; edit them under All entries`);
+      if (over && cur !== null) notes.push(`overridden by ${where(over)}: ${shown(over.value)}`);
+      else if (over) notes.push(`${where(over)} sets ${shown(over.value)}`);
+      return `<div class="cfg-row ${cur !== null ? 'set' : ''}" data-cfgfind="${esc(`${s.key} ${s.hint}`)}">
+        <span class="cfg-name" title="${esc(s.hint)}"><span class="cfg-label">${esc(s.hint)}</span><code>${esc(s.key)}</code></span>
+        <span class="cfg-control">${control}${notes.length ? `<span class="cfg-note">${esc(notes.join(' · '))}</span>` : ''}</span>
+        <button class="icon cfg-x" data-cfgunset="${esc(s.key)}" title="Remove ${esc(s.key)} from the ${esc(CFG_SCOPE_NAMES[scope])} config" ${cur === null ? 'disabled' : ''}>${ic('discard', 'sm')}</button>
+      </div>`;
+    };
+
+    const groups = [...new Set(data.settings.map(s => s.group))];
+    const common = groups
+      .map(g => `<div class="cfg-group"><div class="cfg-gtitle">${esc(g)}</div>${data.settings.filter(s => s.group === g).map(settingRow).join('')}</div>`)
+      .join('');
+
+    const raw = mine
+      .map(
+        (en, i) => `<div class="cfg-row cfg-entry" data-cfgfind="${esc(`${en.key} ${en.value ?? ''}`)}">
+          <code class="cfg-k" title="${esc(en.key)}">${esc(en.key)}</code>
+          <input type="text" data-cfgedit="${i}" data-fid="e:${i}" value="${esc(en.value ?? '')}" ${en.value === null ? 'placeholder="true (no value)"' : ''}>
+          <button class="icon cfg-x" data-cfgdel="${i}" title="Remove this entry">${ic('trash', 'sm')}</button>
+        </div>`
+      )
+      .join('');
+
+    const tab = (s, label) =>
+      `<button class="cfg-tab ${s === scope ? 'active' : ''}" data-cfgscope="${s}" ${data.scopes[s] ? '' : 'disabled title="No repository is open"'}>${label}</button>`;
+    $('#modal').innerHTML = `<div class="dialog cfg">
+      <h2>${ic('settings-gear', 'sm')} Git configuration</h2>
+      <div class="cfg-bar">
+        ${tab('local', `${ic('repo', 'sm')}Repository${data.repo ? ` · ${esc(data.repo)}` : ''}`)}
+        ${tab('global', `${ic('globe', 'sm')}Global (all repositories)`)}
+        <span class="spacer"></span>
+        <span class="search">${ic('filter', 'sm')}<input type="search" id="cfgFilter" data-fid="filter" placeholder="Filter settings and entries…" value="${esc(cfg.filter)}"></span>
+      </div>
+      <div class="hint">${
+        scope === 'local'
+          ? 'Repository settings override global ones and apply only here.'
+          : 'Global settings apply to every repository of this user unless a repository overrides them.'
+      } Changes are written immediately to <button class="link cfg-file" data-cfg="file" title="Open the file in an editor">${esc(data.files[scope] || '')}</button>.</div>
+      <div class="body">
+        <h3>Common settings</h3>
+        ${common}
+        <h3>All entries in this file <span class="muted">(${mine.length})</span></h3>
+        ${raw || '<div class="muted cfg-empty">No entries yet.</div>'}
+        <div class="cfg-row cfg-add">
+          <input type="text" id="cfgAddKey" data-fid="addKey" list="cfgKeys" placeholder="section.name, e.g. alias.co" value="${esc(cfg.addKey)}" spellcheck="false">
+          <input type="text" id="cfgAddValue" data-fid="addValue" list="cfgValues" placeholder="value" value="${esc(cfg.addValue)}" spellcheck="false">
+          <button data-cfg="add" disabled>${ic('add', 'sm')}Add</button>
+        </div>
+        <label class="check cfg-multi" title="For multi-valued keys such as remote.origin.fetch or credential.helper. Unchecked, the new value replaces every existing value of the key."><input type="checkbox" id="cfgAddMulti" ${cfg.addMulti ? 'checked' : ''}> Add as an additional value (--add) instead of replacing</label>
+        <datalist id="cfgKeys">${data.settings.map(s => `<option value="${esc(s.key)}">${esc(s.hint)}</option>`).join('')}</datalist>
+        <datalist id="cfgValues"></datalist>
+      </div>
+      <div class="foot">
+        <span class="error"></span>
+        <span class="spacer"></span>
+        <button data-cfg="close">Close</button>
+      </div></div>`;
+    fillValueSuggestions();
+    validateAdd();
+    applyConfigFilter();
+  }
+
   // ------------------------------------------------------------------ events
 
   document.addEventListener('click', e => {
@@ -1940,6 +2241,7 @@ Clone or initialize another repository from this list.`.trim();
         if (untracked.length) post('discard', { paths: untracked, untracked: true });
         return;
       }
+      if (wipBtn.dataset.wip === 'stashAll') return post('stashSave', { mode: 'untracked' });
       return post(wipBtn.dataset.wip);
     }
     const hunkView = t.closest('.hunkview');
@@ -2183,11 +2485,21 @@ Clone or initialize another repository from this list.`.trim();
 
   // Commit box (re-rendered with the details pane, so listen on the document).
   document.addEventListener('input', e => {
-    if (e.target.id === 'commitMsg') S.commitMsg = e.target.value;
+    if (e.target.id === 'commitMsg') {
+      S.commitMsg = e.target.value;
+      growMsgBox(e.target);
+      const meta = $('#cbMeta');
+      if (meta) meta.innerHTML = msgMetaHtml(S.commitMsg);
+    }
   });
   document.addEventListener('change', e => {
     const d = S.details;
     if (e.target.id === 'noVerify') S.noVerify = e.target.checked;
+    if (e.target.id === 'aiModel') {
+      S.aiSelected = e.target.value;
+      updateAiStatus();
+      post('setAiModel', { id: S.aiSelected });
+    }
     if (e.target.id === 'amend' && d?.kind === 'wip') {
       S.amend = e.target.checked;
       if (S.amend && !(S.commitMsg || '').trim()) S.commitMsg = d.lastMessage;
@@ -2217,10 +2529,11 @@ Clone or initialize another repository from this list.`.trim();
   const updateLayout = () => {
     const stack = window.innerHeight > 520 && window.innerHeight > window.innerWidth * 0.55;
     document.body.classList.toggle('layout-stack', stack);
-    S.detailsWidth = Math.min(S.detailsWidth, Math.max(240, window.innerWidth - 500));
+    S.detailsWidth = Math.min(S.detailsWidth, Math.max(240, window.innerWidth - 460));
     applySizes();
   };
-  S.detailsWidth = saved.detailsWidth || 440;
+  // Layout v2 gives the details pane (commit box) more room by default; widths saved before that are dropped once.
+  S.detailsWidth = saved.layoutV === 2 && saved.detailsWidth ? saved.detailsWidth : Math.max(480, Math.round(window.innerWidth * 0.45));
   window.addEventListener('resize', updateLayout);
   updateLayout();
 
@@ -2231,7 +2544,7 @@ Clone or initialize another repository from this list.`.trim();
     const startSize = vertical ? S.detailsHeight : S.detailsWidth;
     const onMove = ev => {
       if (vertical) S.detailsHeight = Math.max(80, Math.min(window.innerHeight - 160, startSize - (ev.clientY - start)));
-      else S.detailsWidth = Math.max(240, Math.min(window.innerWidth - 480, startSize - (ev.clientX - start)));
+      else S.detailsWidth = Math.max(240, Math.min(window.innerWidth - 460, startSize - (ev.clientX - start)));
       applySizes();
     };
     const onUp = () => {

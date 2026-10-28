@@ -2,7 +2,7 @@
   "name": "gitst8",
   "displayName": "gitSt8",
   "description": "One view for advanced git workflows: graph history, search, fetch/prune, branch, merge, rebase (incl. interactive), stacks, worktrees, tags, reflog undo, compare and diff, hunk staging, bisect, submodules, patches, release changelogs, and PR creation.",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "publisher": "tisp",
   "license": "MIT",
   "icon": "media/logo.png",
@@ -82,6 +82,12 @@
         "command": "gitst8.applyPatch",
         "title": "Apply Patch…",
         "category": "gitSt8"
+      },
+      {
+        "command": "gitst8.editConfig",
+        "title": "Edit Git Config…",
+        "category": "gitSt8",
+        "icon": "$(settings-gear)"
       },
       {
         "command": "gitst8.init",
@@ -236,10 +242,15 @@
           "default": true,
           "description": "Show the button that drafts a commit message with a language model (e.g. Copilot). The diff is sent to the model provider only when you click it."
         },
+        "gitst8.ai.model": {
+          "type": "string",
+          "default": "",
+          "description": "Exact language model id used to draft commit messages. Set it with the model picker in the commit box. Empty falls back to gitst8.ai.modelFamily, then to the first available model (Copilot preferred)."
+        },
         "gitst8.ai.modelFamily": {
           "type": "string",
           "default": "",
-          "description": "Language model family used to draft commit messages (for example gpt-4o). Empty uses the first available model, preferring Copilot."
+          "description": "Language model family used to draft commit messages when gitst8.ai.model is empty or unavailable (for example gpt-4o). Empty uses the first available model, preferring Copilot."
         },
         "gitst8.integrations.enabled": {
           "type": "boolean",

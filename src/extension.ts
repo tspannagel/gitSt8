@@ -120,6 +120,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       await panel.on_applyPatch();
     }),
 
+    vscode.commands.registerCommand('gitst8.editConfig', async () => {
+      const panel = await show();
+      await panel.ready;
+      await panel.on_configOpen();
+    }),
+
     vscode.commands.registerCommand('gitst8.fileHistory',async (arg: unknown) => {
       const t = fileTarget(arg);
       if (!t) return;

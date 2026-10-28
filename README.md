@@ -54,7 +54,7 @@ Prefer an editor tab? Set `"gitst8.location": "editor"`. You can also drag the p
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────────────────────┐
-│ [repo ▾] (branch)  ✓Commit ⟳Fetch ⤓Pull ⤒Push │ ⑂Branch ▣Stash ⌫Clean up ↶Reflog  🔍 │  toolbar
+│ [repo ▾] (branch)  ✓Commit ⟳Fetch ⤓Pull ⤒Push │ ⑂Branch ▣Stash ⌫Clean up ↶Reflog ⚙Config 🔍 │  toolbar
 ├────────────────┬──────────────────────────────────────────┬──────────────────────────┤
 │ Filter…        │ ● Uncommitted changes · 1 staged · 2 …   │ Commit to main           │
 │ ▾ STACK        │ ●─ fix parser       [main] [origin/main] │  [message…]   ✓ Commit   │
@@ -67,7 +67,7 @@ Prefer an editor tab? Set `"gitst8.location": "editor"`. You can also drag the p
    sidebar                    commit graph                        details pane
 ```
 
-**Toolbar.** The repository picker comes first (see [multiple repositories](#multiple-repositories)), then the current branch (shown in red when HEAD is detached). Next come the main actions, the **All branches** toggle, **Filter** (see [search history](#search-history)), search, and refresh. **Pull** and **Push** show a count badge when the current branch is behind or ahead of its upstream: commits to pull (as of the last fetch) and commits to push. When space is tight, buttons shrink to icons; hover to see what they do.
+**Toolbar.** The repository picker comes first (see [multiple repositories](#multiple-repositories)), then the current branch (shown in red when HEAD is detached). Next come the main actions (**Config** opens the [git configuration editor](#git-configuration)), the **All branches** toggle, **Filter** (see [search history](#search-history)), search, and refresh. **Pull** and **Push** show a count badge when the current branch is behind or ahead of its upstream: commits to pull (as of the last fetch) and commits to push. When space is tight, buttons shrink to icons; hover to see what they do.
 
 **Sidebar.** Collapsible sections with a color per kind of ref. Click an entry to jump to its commit in the graph, double-click to check it out (or to open a worktree), and right-click for everything else. Each section header has a **⋯** menu with section-wide actions. The filter box at the top filters every section by name.
 
@@ -114,7 +114,7 @@ A repository without commits shows *No commits yet* in place of the graph, with 
 ### Commit
 
 1. Click **✓ Commit** in the toolbar, or click the *Uncommitted changes* row.
-2. Hover a file for its buttons: **+** stages it, **−** unstages it, **↶** discards its changes, **↗** opens it. Use *stage all* / *unstage all* for everything at once.
+2. Hover a file for its buttons: **+** stages it, **−** unstages it, **↶** discards its changes, **↗** opens it. Use *stage all* / *unstage all* for everything at once. *stash all…* stashes staged, unstaged and untracked changes (`git stash push --include-untracked`, with an optional message).
 3. Click a staged file to diff HEAD ↔ index, or an unstaged file to diff index ↔ working tree.
 4. Type a message and press `Ctrl+Enter` (`Cmd+Enter` on macOS) or click the button.
 
@@ -137,7 +137,7 @@ Options:
 - **Skip hooks** runs `--no-verify`.
 - If nothing is staged, the button turns into **Stage all & commit**.
 
-**Generate a message.** When a language model is available (VS Code's Language Model API, for example through GitHub Copilot), a sparkle button appears next to the message box. Click it to draft a message from your staged diff, or from all tracked changes if nothing is staged. The text streams into the box and the button turns into a stop button while it runs. The prompt includes the diff (long diffs are shortened per file), the file summary, the branch name and your last 15 commit subjects, so the message follows your repository's style, including Conventional Commits when you use them. An empty box is replaced; if you already typed a draft it stays, and the generated text is added below a `--- generated ---` line for you to pick from. Edit it before you commit. **Privacy:** your diff is sent to the model provider only when you click the button. Turn the feature off with `gitst8.ai.enabled`.
+**Generate a message.** A sparkle button sits next to the message box, and a small model picker sits under the commit button. Both use VS Code's Language Model API, for example through GitHub Copilot; when no model is installed or signed in, the button is disabled and the picker line says so. The picker lists every available model grouped by provider (with its context size); **Auto** uses `gitst8.ai.modelFamily` or the first model, Copilot preferred, and shows which model that resolves to. Your choice is saved as `gitst8.ai.model`. The sparkle button's tooltip names the model and the provider your diff would go to, and while it runs the picker line shows which model is generating. Click the sparkle button to draft a message from your staged diff, or from all tracked changes if nothing is staged. The text streams into the box and the button turns into a stop button while it runs. Once you type, the header shows the subject length (amber above 50, red above 72 characters) and the number of body lines. The prompt includes the diff (long diffs are shortened per file), the file summary, the branch name and your last 15 commit subjects, so the message follows your repository's style, including Conventional Commits when you use them. An empty box is replaced; if you already typed a draft it stays, and the generated text is added below a `--- generated ---` line for you to pick from. Edit it before you commit. **Privacy:** your diff is sent to the model provider only when you click the button. Turn the feature off with `gitst8.ai.enabled`.
 
 Commits go through VS Code's Git extension, so commit signing and `git.*` settings behave exactly as in the Source Control view. Your draft message survives refreshes.
 
@@ -359,6 +359,19 @@ Remotes **⋯** → **Add remote…** first asks where the repository is: pick i
 
 Right-click a remote's name for **Fetch & prune**, **Prune stale remote branches**, **Copy URL**, **Change URL**, **Rename**, **Remove**.
 
+### Git configuration
+
+**Config** in the toolbar (or *gitSt8: Edit Git Config…*) opens an editor for `git config`, with two tabs:
+
+- **Repository**: the open repository's `.git/config`. Its settings override global ones and apply only to this repository. Not available when no repository is open.
+- **Global**: your user config (`~/.gitconfig`, or the file in `GIT_CONFIG_GLOBAL` / `$XDG_CONFIG_HOME/git/config`), used by every repository.
+
+**Common settings** are grouped (identity, signing, pull / push / fetch, branches / merge / rebase, working tree, diff, tools). Yes/no and fixed-choice settings such as `pull.rebase`, `pull.ff`, `push.autoSetupRemote`, `merge.conflictStyle` or `core.autocrlf` are selectors; names, emails, paths and commands such as `user.email`, `init.defaultBranch` or `core.editor` are text fields (applied on Enter or when you leave the field). Picking *not set* or clearing a text field removes the key from this file. When a key is not set in the shown file, the selector says what applies instead (for example *inherits true (global)* or *git default*). In the Global tab, a note shows when the repository overrides the value.
+
+**All entries in this file** lists every key/value of the file, including remotes, branches, aliases and includes. Edit a value in place (Enter or leave the field), remove it with the trash icon, or add any key with the free-text row at the bottom: the key field suggests the common settings, and the value field suggests their choices. A new value replaces every existing value of that key, unless you check *Add as an additional value (--add)*, which is what multi-valued keys such as `remote.origin.fetch` need. Editing or removing one value of a multi-valued key only touches that value.
+
+Changes are written immediately. The file path under the tabs opens the file in an editor; the filter box narrows both lists. `system` and `worktree` config are not edited here, but their values are taken into account for *inherits* and *overridden by*.
+
 ### GitHub and Azure DevOps
 
 When a remote points at GitHub, GitHub Enterprise or Azure DevOps, gitSt8 shows hosting-service information next to your history. Status is read in the background; the only thing gitSt8 ever writes to the server is a pull request you explicitly create (below).
@@ -412,6 +425,7 @@ In a multi-root workspace, or a folder with nested repositories, the repository 
 | `gitSt8: Initialize Repository…` | | `git init` in a workspace folder or any folder (also on folders in the Explorer right-click menu) |
 | `gitSt8: Clone Repository…` | | Clone from your GitHub or Azure DevOps account, or from a URL |
 | `gitSt8: Apply Patch…` | | Apply a `.patch`, `.diff` or `.mbox` file |
+| `gitSt8: Edit Git Config…` | | Repository and global git config: common settings as selectors, any key as free text |
 | `gitSt8: File History in gitSt8` | | History of the active or right-clicked file or folder |
 | `gitSt8: Fetch All & Prune` | | Fetch and prune every open repository |
 | `gitSt8: Sign in to GitHub` / `Sign in to Azure DevOps` | | Sign in for pull requests and CI status |
@@ -436,7 +450,8 @@ Rebind these in **Keyboard Shortcuts** (`Ctrl+K Ctrl+S`, on macOS `Cmd+K Cmd+S`;
 | `gitst8.location` | `panel` | `panel`: bottom panel next to the terminal. `editor`: an editor tab |
 | `gitst8.stackBase` | `""` | Base branch for the Stack section and branch cleanup. Empty means auto-detect |
 | `gitst8.staleBranchDays` | `60` | Days without commits before a branch is marked stale |
-| `gitst8.ai.enabled` | `true` | Show the button that drafts a commit message with a language model. Hidden when no model is available |
+| `gitst8.ai.enabled` | `true` | Show the button and model picker that draft a commit message with a language model |
+| `gitst8.ai.model` | `""` | Exact model id for commit messages, set by the picker in the commit box. Empty: Auto |
 | `gitst8.ai.modelFamily` | `""` | Model family for commit messages (for example `gpt-4o`). Empty: first available model, Copilot preferred |
 | `gitst8.integrations.enabled` | `true` | Show pull requests and CI status from GitHub / Azure DevOps |
 | `gitst8.integrations.remote` | `""` | Remote to integrate with. Empty: `origin`, else the first supported remote |

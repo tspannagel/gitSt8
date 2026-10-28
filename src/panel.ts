@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as crypto from 'crypto';
+import * as os from 'os';
 import { Submodule } from './submodules';
 import { Commit, FileChange, GitCli, Head, LocalBranch, OpState, Query, QueryKind, Refs, StackEntry, StatusEntry, Worktree, EMPTY_TREE, appendIgnore, ignorePattern, splitRemoteRef } from './git';
 import { layout } from './graph';
@@ -14,6 +15,7 @@ import { buildCommitPrompt, cleanModelOutput } from './commitPrompt';
 import { branchUrl, commitUrl, createPrUrl, fileUrl, providerName } from './providers/links';
 import { defaultBody, defaultTitle, prHeadRefspec } from './prdraft';
 import { chooseInitFolder, cloneRepository, defaultBranch, pickRepositoryUrl } from './repoSetup';
+import { CONFIG_SCOPES, CONFIG_SETTINGS, ConfigScope } from './gitConfig';
 import type { API, Repository } from './types/git';
 
 const PAGE = 400;
@@ -1715,15 +1717,26 @@ export class RepoPanel {
   // ---- generate commit message
 
   private aiCts?: vscode.CancellationTokenSource;
-  private aiAvailable?: boolean; // cached; null/undefined = not checked yet
+  private aiModels?: vscode.LanguageModelChat[]; // cached; undefined = not checked yet
   private aiWatching = false;
 
-  /** Picks a chat model: gitst8.ai.modelFamily if set, else the first one (Copilot preferred). */
+  /** Picks a chat model: gitst8.ai.model (exact id) if set and available, else gitst8.ai.modelFamily, else the first one (Copilot preferred). */
   private async pickModel(): Promise<vscode.LanguageModelChat | undefined> {
-    const family = (vscode.workspace.getConfiguration('gitst8').get<string>('ai.modelFamily') || '').trim();
+    const cfg = vscode.workspace.getConfiguration('gitst8');
+    const id = (cfg.get<string>('ai.model') || '').trim();
+    const family = (cfg.get<string>('ai.modelFamily') || '').trim();
     const sel = (s: vscode.LanguageModelChatSelector) => vscode.lm.selectChatModels(s);
+    if (id) {
+      const exact = (await sel({ id }))[0];
+      if (exact) return exact;
+    }
     const base = family ? { family } : {};
     return (await sel({ vendor: 'copilot', ...base }))[0] ?? (await sel(base))[0];
+  }
+
+  /** What the webview shows about a model. */
+  private static modelInfo(m: vscode.LanguageModelChat) {
+    return { id: m.id, name: m.name, vendor: m.vendor, family: m.family, version: m.version, maxInputTokens: m.maxInputTokens };
   }
 
   /** Tells the webview whether the sparkle button should show. Checked lazily, cached, re-checked when models change. */
@@ -1735,14 +1748,25 @@ export class RepoPanel {
         vscode.workspace.onDidChangeConfiguration(e => e.affectsConfiguration('gitst8.ai') && this.postAiAvailability(true))
       );
     }
-    const enabled = vscode.workspace.getConfiguration('gitst8').get<boolean>('ai.enabled', true);
-    if (!enabled) this.aiAvailable = false;
-    else if (recheck || this.aiAvailable === undefined) this.aiAvailable = (await vscode.lm.selectChatModels()).length > 0;
-    this.post({ type: 'aiAvailable', available: !!this.aiAvailable });
+    const cfg = vscode.workspace.getConfiguration('gitst8');
+    const enabled = cfg.get<boolean>('ai.enabled', true);
+    if (!enabled) this.aiModels = [];
+    else if (recheck || this.aiModels === undefined) this.aiModels = await vscode.lm.selectChatModels();
+    const models = this.aiModels.map(RepoPanel.modelInfo);
+    // What "Auto" resolves to, so the webview can name the model before anything is sent.
+    const auto = models.length ? await this.pickModel().then(m => m?.id).catch(() => undefined) : undefined;
+    this.post({ type: 'aiAvailable', enabled, available: models.length > 0, models, selected: (cfg.get<string>('ai.model') || '').trim(), effective: auto });
+  }
+
+  /** Stores the model picked in the commit box (empty = automatic). User setting, so it applies to every repository. */
+  async on_setAiModel(m: Msg) {
+    const id = typeof m.id === 'string' ? m.id : '';
+    if (id && !this.aiModels?.some(x => x.id === id)) return;
+    await vscode.workspace.getConfiguration('gitst8').update('ai.model', id || undefined, vscode.ConfigurationTarget.Global);
   }
 
   async on_aiCheck() {
-    await this.postAiAvailability().catch(() => this.post({ type: 'aiAvailable', available: false }));
+    await this.postAiAvailability().catch(() => this.post({ type: 'aiAvailable', enabled: true, available: false }));
   }
 
   async on_cancelCommitMessage() {
@@ -1769,6 +1793,7 @@ export class RepoPanel {
       const branch = (await git.tryRun(['rev-parse', '--abbrev-ref', 'HEAD'])).trim();
       const model = await this.pickModel();
       if (!model) return fail('No language model is available. Install a language model provider such as GitHub Copilot, sign in, and try again.');
+      this.post({ type: 'commitMsgModel', model: RepoPanel.modelInfo(model) });
       const prompt = buildCommitPrompt({ diff, stat, recentSubjects: subjects, branch: branch === 'HEAD' ? '' : branch, maxChars: Math.max(2000, Math.min(60000, model.maxInputTokens * 3)) });
       const res = await model.sendRequest([vscode.LanguageModelChatMessage.User(prompt)], { justification: 'gitSt8 drafts a commit message from your changes.' }, cts.token);
       let text = '';
@@ -1783,7 +1808,7 @@ export class RepoPanel {
         const why: Record<string, string> = {
           NoPermissions: 'Permission to use the language model was not granted. Click the button again and allow access.',
           Blocked: 'The language model blocked this request.',
-          NotFound: 'The language model was not found. Check gitst8.ai.modelFamily.',
+          NotFound: 'The language model was not found. Pick another model in the commit box or check gitst8.ai.model / gitst8.ai.modelFamily.',
         };
         return fail(why[e.code] || `Language model error: ${e.message}`);
       }
@@ -2176,6 +2201,74 @@ export class RepoPanel {
     if (stale) vscode.window.showWarningMessage(`gitSt8: ${m.path} changed since the diff was shown. Nothing was applied; review the refreshed diff and try again.`);
   }
 
+  // ---------------------------------------------------------------- git config
+
+  /** Global config works without an open repository, so it runs from the home folder then. */
+  private configGit(scope: ConfigScope): GitCli {
+    if (scope === 'local' || this.root) return this.git();
+    return new GitCli(this.api.git.path, os.homedir());
+  }
+
+  private configScope(m: Msg): ConfigScope {
+    const scope = m.scope as ConfigScope;
+    if (!CONFIG_SCOPES.includes(scope)) throw new Error(`Unknown config scope: ${m.scope}`);
+    return scope;
+  }
+
+  /** Posts both editable scopes plus the effective values (all scopes, with origin) to the config dialog. */
+  async postConfig(): Promise<void> {
+    const global = this.configGit('global');
+    const repo = this.root ? this.git() : null;
+    const [globalEntries, localEntries, effective, globalFile, localFile] = await Promise.all([
+      global.configList('global'),
+      repo ? repo.configList('local') : null,
+      (repo || global).configList(),
+      global.configFile('global'),
+      repo ? repo.configFile('local') : null,
+    ]);
+    this.post({
+      type: 'config',
+      repo: this.root ? path.basename(this.root) : null,
+      settings: CONFIG_SETTINGS,
+      scopes: { local: localEntries, global: globalEntries },
+      files: { local: localFile, global: globalFile },
+      effective,
+    });
+  }
+
+  async on_configOpen() {
+    await this.postConfig();
+  }
+
+  /** m: scope, key, value, old? (replace only that value), add? (append another value). */
+  async on_configSet(m: Msg) {
+    const scope = this.configScope(m);
+    try {
+      await this.configGit(scope).configSet(scope, String(m.key), String(m.value ?? ''), { old: m.old == null ? undefined : String(m.old), add: !!m.add });
+    } finally {
+      await this.postConfig();
+    }
+    if (this.root) this.scheduleRefresh();
+  }
+
+  /** m: scope, key, value? (remove only entries with that value, else all of the key). */
+  async on_configUnset(m: Msg) {
+    const scope = this.configScope(m);
+    try {
+      await this.configGit(scope).configUnset(scope, String(m.key), m.value == null ? undefined : String(m.value));
+    } finally {
+      await this.postConfig();
+    }
+    if (this.root) this.scheduleRefresh();
+  }
+
+  async on_configOpenFile(m: Msg) {
+    const scope = this.configScope(m);
+    const file = await this.configGit(scope).configFile(scope);
+    if (!fs.existsSync(file)) fs.writeFileSync(file, '');
+    await vscode.window.showTextDocument(vscode.Uri.file(file), { preview: false });
+  }
+
   // ---------------------------------------------------------------- html
 
   html() {
@@ -2214,6 +2307,7 @@ ${font ? `<style nonce="${nonce}">@font-face { font-family: "codicon"; font-disp
     <button class="tb" data-cmd="stashSave" title="Stash changes (right-click: untracked / staged only / keep index)"><i class="ci" data-icon="archive"></i><span class="lbl">Stash</span></button>
     <button class="tb" data-cmd="cleanupBranches" title="Delete gone, merged or stale local branches"><i class="ci" data-icon="clear-all"></i><span class="lbl">Clean up</span></button>
     <button class="tb" data-cmd="reflog" title="HEAD reflog: undo resets, rebases and other history changes"><i class="ci" data-icon="history"></i><span class="lbl">Reflog</span></button>
+    <button class="tb" data-cmd="configOpen" title="Git configuration of this repository and global (user.name, pull.rebase, …)"><i class="ci" data-icon="settings-gear"></i><span class="lbl">Config</span></button>
   </span>
   <span class="spacer"></span>
   <label class="check" title="Show all branches, or only the history of HEAD"><input type="checkbox" id="showAll" checked><i class="ci" data-icon="git-merge"></i><span class="lbl">All branches</span></label>

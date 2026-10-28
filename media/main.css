@@ -445,9 +445,9 @@ body.layout-stack #detailsPane { grid-column: 2; grid-row: 3; }
 /* ---------------------------------------------------------------- graph */
 
 #graph { width: 100%; border-collapse: collapse; table-layout: fixed; }
-#graph col.c-author { width: 130px; }
-#graph col.c-date { width: 80px; }
-#graph col.c-sha { width: 66px; }
+#graph col.c-author { width: 110px; }
+#graph col.c-date { width: 72px; }
+#graph col.c-sha { width: 62px; }
 #graph tr { height: var(--row); cursor: default; }
 #graph tr:hover { background: var(--hover); }
 #graph tr.sel { background: var(--sel); color: var(--sel-fg); }
@@ -472,7 +472,10 @@ body.layout-stack #detailsPane { grid-column: 2; grid-row: 3; }
   border-left: 2px solid var(--vscode-focusBorder);
   background: var(--vscode-sideBar-background, var(--vscode-editor-background));
 }
-@media (max-width: 1100px) { #graph col.c-author { width: 0; } #graph td.author { padding: 0; } }
+/* the graph is the narrow part beside the details pane: drop author, then hash, as it gets slimmer */
+#center { container-type: inline-size; }
+@container (max-width: 640px) { #graph col.c-author { width: 0; } #graph td.author { padding: 0; } }
+@container (max-width: 460px) { #graph col.c-sha { width: 0; } #graph td.sha { padding: 0; } }
 
 .badge {
   display: inline-flex;
@@ -554,15 +557,24 @@ button.link.more { margin-bottom: 6px; }
 .wip { display: grid; grid-template-columns: minmax(220px, 1fr) 2fr; gap: 16px; align-items: start; }
 body:not(.layout-stack) .wip { grid-template-columns: 1fr; }
 .commitbox { display: flex; flex-direction: column; gap: 6px; }
-.commitbox textarea { width: 100%; min-height: 70px; resize: vertical; font-family: var(--vscode-editor-font-family); }
-.commitbox .msgrow { display: flex; gap: 4px; align-items: flex-start; }
-.commitbox .msgrow textarea { flex: 1; min-width: 0; }
-.commitbox .icon-btn { background: transparent; border: 1px solid transparent; color: var(--vscode-foreground); cursor: pointer; padding: 3px 5px; border-radius: 3px; }
-.commitbox .icon-btn:hover { background: var(--vscode-toolbar-hoverBackground); }
+.cb-head { display: flex; align-items: center; gap: 8px; }
+.cb-title { font-weight: 600; }
+.cb-branch { display: inline-flex; align-items: center; gap: 3px; color: var(--c-branch); font-family: var(--vscode-editor-font-family); font-size: 0.95em; }
+.cb-meta { margin-left: auto; display: flex; gap: 8px; color: var(--muted); font-size: 0.9em; }
+.cb-meta .warn { color: var(--vscode-editorWarning-foreground, #d29922); }
+.cb-meta .over { color: var(--vscode-errorForeground); font-weight: 600; }
+.cb-msg { display: flex; gap: 4px; align-items: flex-start; }
+.cb-msg textarea { flex: 1; min-width: 0; resize: vertical; font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size, 13px); line-height: 1.45; padding: 4px 8px; }
+.cb-ai { background: transparent; border: 1px solid transparent; color: var(--vscode-foreground); padding: 4px 5px; }
+.cb-ai:hover:not(:disabled) { background: var(--vscode-toolbar-hoverBackground); }
 .commitbox .ai-error { color: var(--vscode-errorForeground); }
-.commitbox .opts { display: flex; gap: 12px; flex-wrap: wrap; color: var(--muted); }
+.cb-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; color: var(--muted); }
 .commitbox .check { display: inline-flex; align-items: center; gap: 4px; }
-.commitbox button.primary { align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; }
+.commitbox button.cb-commit { flex: 1; min-width: 160px; display: inline-flex; align-items: center; justify-content: center; gap: 4px; padding: 4px 8px; }
+.cb-model { display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: 0.9em; min-height: 1.4em; }
+.cb-model:empty { display: none; }
+.cb-model select { border: none; background: transparent; color: var(--muted); padding: 0; min-width: 0; max-width: 100%; cursor: pointer; font-size: inherit; }
+.cb-model select:hover { color: var(--vscode-foreground); }
 .grp-head { font-weight: 600; margin: 8px 0 2px; display: flex; gap: 8px; align-items: center; }
 .grp-head:first-child { margin-top: 0; }
 .grp-head.conflict { color: var(--vscode-errorForeground); }
@@ -638,6 +650,36 @@ table.reflog .btns { text-align: right; }
 .rb-move button { padding: 0 5px; }
 .rb-sha { font-family: var(--vscode-editor-font-family); color: var(--muted); padding-top: 3px; }
 .rb-subject { padding-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* git config editor */
+.dialog.cfg { height: calc(100vh - 40px); }
+.dialog h2 .ci { vertical-align: -2px; margin-right: 4px; }
+.cfg-bar { display: flex; align-items: center; gap: 4px; padding: 8px 14px 0; flex-wrap: wrap; }
+.cfg-bar .spacer { flex: 1; }
+.cfg-tab { display: inline-flex; align-items: center; gap: 5px; background: none; border: none; border-bottom: 2px solid transparent; border-radius: 0; padding: 4px 10px; color: var(--muted); }
+.cfg-tab.active { color: var(--vscode-foreground); border-bottom-color: var(--vscode-focusBorder); }
+.cfg-bar .search { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); }
+.cfg-bar .search input { width: 220px; }
+.cfg .muted { color: var(--muted); font-weight: normal; }
+.cfg .body h3 { margin: 14px 0 4px; font-size: 1em; }
+.cfg .body h3:first-child { margin-top: 4px; }
+.cfg-gtitle { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; margin: 10px 0 2px; }
+.cfg-row { display: grid; grid-template-columns: minmax(180px, 2fr) minmax(160px, 3fr) 26px; gap: 8px; align-items: center; padding: 2px 0; }
+.cfg-row[hidden], .cfg-group[hidden] { display: none; }
+.cfg-name { display: flex; flex-direction: column; min-width: 0; }
+.cfg-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cfg-name code, .cfg-k { font-family: var(--vscode-editor-font-family); font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cfg-row.set .cfg-name code { color: var(--vscode-textLink-foreground); }
+.cfg-control { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.cfg-control select, .cfg-control input, .cfg-entry input, .cfg-add input { width: 100%; box-sizing: border-box; }
+.cfg-row:not(.set) select { color: var(--muted); }
+.cfg-note { color: var(--muted); font-size: 11px; }
+.cfg-entry .cfg-k { font-size: 12px; color: var(--vscode-foreground); }
+.cfg-add { margin-top: 6px; grid-template-columns: minmax(180px, 2fr) minmax(160px, 3fr) auto; }
+.cfg-add button { display: inline-flex; align-items: center; gap: 4px; }
+.cfg-multi { color: var(--muted); padding: 4px 0; }
+.cfg-empty { padding: 4px 0; }
+.cfg-file { font-family: var(--vscode-editor-font-family); }
 .rb-subject textarea { width: 100%; min-height: 48px; resize: vertical; font-family: var(--vscode-editor-font-family); }
 
 #busy {
