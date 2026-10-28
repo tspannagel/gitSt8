@@ -554,8 +554,8 @@ button.link.more { margin-bottom: 6px; }
 .st-R, .st-C { color: var(--vscode-gitDecoration-renamedResourceForeground, #58a6ff); }
 .st-\! { color: var(--vscode-gitDecoration-conflictingResourceForeground, #f85149); }
 
-.wip { display: grid; grid-template-columns: minmax(220px, 1fr) 2fr; gap: 16px; align-items: start; }
-body:not(.layout-stack) .wip { grid-template-columns: 1fr; }
+#details .wip { display: grid; grid-template-columns: minmax(220px, 1fr) 2fr; gap: 16px; align-items: start; }
+body:not(.layout-stack) #details .wip { grid-template-columns: 1fr; }
 .commitbox { display: flex; flex-direction: column; gap: 6px; }
 .cb-head { display: flex; align-items: center; gap: 8px; }
 .cb-title { font-weight: 600; }

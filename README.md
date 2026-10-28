@@ -52,20 +52,9 @@ Prefer an editor tab? Set `"gitst8.location": "editor"`. You can also drag the p
 
 ## The view at a glance
 
-```text
-┌──────────────────────────────────────────────────────────────────────────────────────┐
-│ [repo ▾] (branch)  ✓Commit ⟳Fetch ⤓Pull ⤒Push │ ⑂Branch ▣Stash ⌫Clean up ↶Reflog ⚙Config 🔍 │  toolbar
-├────────────────┬──────────────────────────────────────────┬──────────────────────────┤
-│ Filter…        │ ● Uncommitted changes · 1 staged · 2 …   │ Commit to main           │
-│ ▾ STACK        │ ●─ fix parser       [main] [origin/main] │  [message…]   ✓ Commit   │
-│ ▾ BRANCHES     │ │ ┃ message, author, SHA, files → diff   │  Staged changes          │
-│ ▸ REMOTES      │ │ ● add tests        [feature/x]         │  Changes                 │
-│ ▸ TAGS         │ ●─┘ initial                    [v1.0]    │                          │
-│ ▸ WORKTREES    │                                          │  (or: compare, stash,    │
-│ ▸ STASHES      │                                          │   reflog, multi-select)  │
-└────────────────┴──────────────────────────────────────────┴──────────────────────────┘
-   sidebar                    commit graph                        details pane
-```
+![gitSt8 in the bottom panel: sidebar with stack, branches, remotes and tags; the commit graph; and the commit box with staged and unstaged changes](media/screenshot.png)
+
+*Left to right: sidebar, commit graph, details pane (here the commit box; it also shows commit details, compare, stash and reflog). Sample repository with made-up names.*
 
 **Toolbar.** The repository picker comes first (see [multiple repositories](#multiple-repositories)), then the current branch (shown in red when HEAD is detached). Next come the main actions (**Config** opens the [git configuration editor](#git-configuration)), the **All branches** toggle, **Filter** (see [search history](#search-history)), search, and refresh. **Pull** and **Push** show a count badge when the current branch is behind or ahead of its upstream: commits to pull (as of the last fetch) and commits to push. When space is tight, buttons shrink to icons; hover to see what they do.
 
