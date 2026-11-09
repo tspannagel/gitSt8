@@ -316,7 +316,39 @@ body.layout-stack #center { grid-column: 2; grid-row: 1; }
 body.layout-stack #splitter { grid-column: 2; grid-row: 2; cursor: row-resize; }
 body.layout-stack #detailsPane { grid-column: 2; grid-row: 3; }
 
-#splitter:hover { background: var(--vscode-focusBorder); }
+/* narrow (primary / secondary side bar): one column like VS Code's Source Control view:
+   commit box / details on top, then refs, then the graph */
+#sideSplitter, #refsToggle { display: none; }
+body.layout-narrow #main {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: var(--details-h) 4px var(--refs-h, 180px) 4px minmax(60px, 1fr);
+}
+body.layout-narrow #detailsPane { grid-column: 1; grid-row: 1; }
+body.layout-narrow #splitter { grid-column: 1; grid-row: 2; cursor: row-resize; }
+body.layout-narrow #sidebar { grid-column: 1; grid-row: 3; border-right: none; }
+body.layout-narrow #sideSplitter { display: block; grid-column: 1; grid-row: 4; cursor: row-resize; background: var(--border); }
+body.layout-narrow #center { grid-column: 1; grid-row: 5; }
+body.layout-narrow.refs-hidden #sidebar, body.layout-narrow.refs-hidden #sideSplitter { display: none; }
+body.layout-narrow.refs-hidden #main { grid-template-rows: var(--details-h) 4px 0 0 minmax(60px, 1fr); }
+body.layout-narrow #refsToggle { display: inline-flex; }
+#refsToggle.active { color: var(--vscode-textLink-foreground); }
+
+/* narrow toolbar: icon-only buttons, search takes its own full-width row */
+body.layout-narrow #toolbar { gap: 4px; padding: 4px 6px; }
+body.layout-narrow #toolbar .spacer { display: none; }
+body.layout-narrow #toolbar .tgroup { padding-left: 2px; }
+body.layout-narrow #toolbar button.tb { padding: 2px 4px; }
+body.layout-narrow .repo-pick { flex: 1 1 140px; min-width: 0; }
+body.layout-narrow .repo-pick select { flex: 1; min-width: 0; max-width: none; }
+body.layout-narrow .head-chip, body.layout-narrow #integration { max-width: 100%; min-width: 0; }
+body.layout-narrow .search { order: 10; flex: 1 1 100%; min-width: 0; }
+body.layout-narrow .search select { max-width: 40%; }
+body.layout-narrow #filter { flex: 1; min-width: 0; width: auto; }
+body.layout-narrow #filterBtn, body.layout-narrow #toolbar [data-cmd=refresh] { order: 11; }
+body.layout-narrow #querybar { padding: 3px 6px; }
+body.layout-narrow #filterForm .ff, body.layout-narrow #filterForm .ff input { width: 100%; }
+
+#splitter:hover, #sideSplitter:hover { background: var(--vscode-focusBorder); }
 #graphWrap { flex: 1; overflow: auto; min-height: 0; }
 #details { flex: 1; overflow: auto; padding: 8px 12px; min-height: 0; }
 #details .empty, .empty { color: var(--muted); padding: 6px 8px; }
@@ -476,6 +508,7 @@ body.layout-stack #detailsPane { grid-column: 2; grid-row: 3; }
 #center { container-type: inline-size; }
 @container (max-width: 640px) { #graph col.c-author { width: 0; } #graph td.author { padding: 0; } }
 @container (max-width: 460px) { #graph col.c-sha { width: 0; } #graph td.sha { padding: 0; } }
+@container (max-width: 320px) { #graph col.c-date { width: 0; } #graph td.date { padding: 0; } }
 
 .badge {
   display: inline-flex;
@@ -570,7 +603,8 @@ body:not(.layout-stack) #details .wip { grid-template-columns: 1fr; }
 .commitbox .ai-error { color: var(--vscode-errorForeground); }
 .cb-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; color: var(--muted); }
 .commitbox .check { display: inline-flex; align-items: center; gap: 4px; }
-.commitbox button.cb-commit { flex: 1; min-width: 160px; display: inline-flex; align-items: center; justify-content: center; gap: 4px; padding: 4px 8px; }
+.cb-go { flex: 1 1 200px; display: flex; align-items: center; gap: 4px; min-width: 0; }
+.commitbox button.cb-commit { flex: 1; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 4px; padding: 4px 8px; }
 .cb-model { display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: 0.9em; min-height: 1.4em; }
 .cb-model:empty { display: none; }
 .cb-model select { border: none; background: transparent; color: var(--muted); padding: 0; min-width: 0; max-width: 100%; cursor: pointer; font-size: inherit; }
@@ -731,3 +765,22 @@ table.reflog .btns { text-align: right; }
 .welcome b { color: var(--vscode-foreground); font-weight: 600; }
 .welcome-btns { display: inline-flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
 .welcome-btns button { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; }
+
+/* ---------------------------------------------------------------- narrow dialogs */
+
+@media (max-width: 600px) {
+  #modal { padding-top: 6px; }
+  .dialog { width: calc(100vw - 12px); max-height: calc(100vh - 12px); }
+  .dialog.cfg { height: calc(100vh - 12px); }
+  .dialog h2, .dialog .body, .dialog .foot { padding-left: 8px; padding-right: 8px; }
+  .dialog .foot { flex-wrap: wrap; }
+  .cfg-bar .search input { width: 120px; }
+  /* name on its own line, then control + remove button */
+  .cfg-row { grid-template-columns: minmax(0, 1fr) 26px; gap: 2px 6px; }
+  .cfg-row .cfg-name, .cfg-entry .cfg-k { grid-column: 1 / -1; }
+  .cfg-add { grid-template-columns: minmax(0, 1fr); }
+  .cfg-add button { justify-self: start; }
+  .rb-row { grid-template-columns: 16px 46px 80px minmax(0, 1fr); }
+  .rb-row .rb-sha { display: none; }
+  #details .d-meta { gap: 2px 10px; }
+}

@@ -49,7 +49,7 @@ npm run package    # vsce package -> .vsix; release via .github/workflows/publis
 - **CSP:** scripts and styles come only from `media/` or a nonce. External resources are not allowed.
 - **Icons** are VS Code's own codicon font, loaded from `vscode.env.appRoot/out/media/codicon.ttf`. Use `ic('name', 'sm'|'xs')` or `<i class="ci" data-icon="name">` in static HTML. Code points live in `ICONS` in `main.js`. To add one, look up its code point in VS Code's registry (search `workbench.desktop.main.js` for `("name",<decimal>)`), don't guess. The `.ci` class is reserved for icon glyphs; don't reuse it for other elements (CI status uses `.cistat`).
 - **Colors** come from theme variables (`--vscode-*`) and the ref-kind palette in `:root` (`--c-branch`, `--c-remote`, `--c-tag`, …), so light/dark/high-contrast work.
-- **Layout** switches between side-by-side (wide/short panel) and stacked (tall editor tab) via `body.layout-stack`.
+- **Layout** has three modes, set by `updateLayout()` in `main.js`: side-by-side (wide/short panel, default), stacked (tall editor tab, `body.layout-stack`) and narrow (width < 600px, e.g. dragged into a side bar, `body.layout-narrow`): one column with details / `#splitter` / refs / `#sideSplitter` / graph, refs toggled by `#refsToggle` (`body.refs-hidden`). Dialogs get a narrow variant through `@media (max-width: 600px)`.
 
 ## Testing
 

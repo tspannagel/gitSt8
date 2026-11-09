@@ -2325,6 +2325,7 @@ ${font ? `<style nonce="${nonce}">@font-face { font-family: "codicon"; font-disp
   <input id="filter" type="search" placeholder="Filter loaded commits…">
   </span>
   <button class="tb" id="filterBtn" title="Filter history by author, date, path, message or branches"><i class="ci" data-icon="filter"></i></button>
+  <button class="tb" id="refsToggle" title="Show or hide branches, tags, worktrees and stashes"><i class="ci" data-icon="list-flat"></i></button>
   <button class="tb" data-cmd="refresh" title="Refresh (F5)"><i class="ci" data-icon="refresh"></i></button>
 </div>
 <div id="querybar" hidden></div>
@@ -2334,6 +2335,7 @@ ${font ? `<style nonce="${nonce}">@font-face { font-family: "codicon"; font-disp
     <div class="side-filter"><i class="ci" data-icon="filter"></i><input id="sideFilter" type="search" placeholder="Filter branches, tags…"></div>
     <div id="sideContent"></div>
   </aside>
+  <div id="sideSplitter" title="Drag to resize"></div>
   <section id="center">
     <div id="graphWrap">
       <table id="graph"><colgroup><col class="c-graph"><col><col class="c-author"><col class="c-date"><col class="c-sha"></colgroup><tbody></tbody></table>

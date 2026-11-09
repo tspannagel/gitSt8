@@ -47,12 +47,14 @@
     highlight: null, // file name/path to highlight in file lists
     collapsed: saved.collapsed || { tags: true, worktrees: false },
     detailsHeight: saved.detailsHeight || 280,
+    refsHeight: saved.refsHeight || 180, // narrow layout: height of the refs list above the graph
+    refsOpen: saved.refsOpen !== false, // narrow layout: refs list shown
     rawBody: !!saved.rawBody, // show commit bodies as plain text instead of Markdown
     bodyExpanded: false,
   };
 
   const post = (type, extra = {}) => vscode.postMessage({ type, ...extra });
-  const persist = () => vscode.setState({ collapsed: S.collapsed, detailsHeight: S.detailsHeight, detailsWidth: S.detailsWidth, layoutV: 2, rawBody: S.rawBody });
+  const persist = () => vscode.setState({ collapsed: S.collapsed, detailsHeight: S.detailsHeight, refsHeight: S.refsHeight, refsOpen: S.refsOpen, detailsWidth: S.detailsWidth, layoutV: 2, rawBody: S.rawBody });
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const short = s => (s && /^[0-9a-f]{40}$/.test(s) ? s.slice(0, 7) : s);
   const normPath = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
@@ -1081,11 +1083,10 @@ Clone or initialize another repository from this list.`.trim();
           <span class="cb-meta" id="cbMeta">${msgMetaHtml(S.commitMsg)}</span></div>
         <div class="cb-msg">
           <textarea id="commitMsg" rows="${msgRows(S.commitMsg)}" placeholder="Message (${MOD}+Enter to commit)">${esc(S.commitMsg || '')}</textarea>
-          ${aiOn ? aiButtonHtml() : ''}
         </div>
         <div class="ai-error" id="aiError" hidden></div>
         <div class="cb-actions">
-          <button class="primary cb-commit" data-commit="1" ${!nStaged && !nUnstaged && !S.amend ? 'disabled' : ''}>${ic('check')}${label}</button>
+          <span class="cb-go"><button class="primary cb-commit" data-commit="1" ${!nStaged && !nUnstaged && !S.amend ? 'disabled' : ''}>${ic('check')}${label}</button>${aiOn ? aiButtonHtml() : ''}</span>
           <label class="check" title="${canAmend ? 'Replace the last commit' : 'No commit yet'}"><input type="checkbox" id="amend" ${S.amend ? 'checked' : ''} ${canAmend ? '' : 'disabled'}> Amend</label>
           <label class="check" title="git commit --no-verify"><input type="checkbox" id="noVerify" ${S.noVerify ? 'checked' : ''}> Skip hooks</label>
         </div>
@@ -2520,15 +2521,28 @@ Clone or initialize another repository from this list.`.trim();
   });
 
   // Layout: details beside the graph when the view is wide and short (bottom panel),
-  // below it when tall (editor tab). The splitter resizes whichever applies.
+  // below it when tall (editor tab). Narrow views (secondary/primary side bar) stack everything
+  // in one column: refs, graph, details. Each splitter resizes the pane it borders.
   const rootStyle = document.documentElement.style;
+  const isNarrow = () => document.body.classList.contains('layout-narrow');
+  const isVertical = () => isNarrow() || document.body.classList.contains('layout-stack');
+  const refsShown = () => Math.max(60, Math.min(S.refsHeight, window.innerHeight - 260));
   const applySizes = () => {
+    const h = window.innerHeight;
     rootStyle.setProperty('--details-w', `${S.detailsWidth}px`);
-    rootStyle.setProperty('--details-h', `${S.detailsHeight}px`);
+    // in the narrow layout three panes share the height: the graph keeps at least ~100px
+    const refs = isNarrow() && S.refsOpen ? refsShown() : 0;
+    const details = isNarrow() ? Math.min(S.detailsHeight, Math.max(80, h - refs - 180)) : S.detailsHeight;
+    rootStyle.setProperty('--details-h', `${details}px`);
+    rootStyle.setProperty('--refs-h', `${refs}px`);
   };
   const updateLayout = () => {
-    const stack = window.innerHeight > 520 && window.innerHeight > window.innerWidth * 0.55;
+    const narrow = window.innerWidth < 600;
+    const stack = !narrow && window.innerHeight > 520 && window.innerHeight > window.innerWidth * 0.55;
+    document.body.classList.toggle('layout-narrow', narrow);
     document.body.classList.toggle('layout-stack', stack);
+    document.body.classList.toggle('refs-hidden', narrow && !S.refsOpen);
+    $('#refsToggle').classList.toggle('active', S.refsOpen);
     S.detailsWidth = Math.min(S.detailsWidth, Math.max(240, window.innerWidth - 460));
     applySizes();
   };
@@ -2537,23 +2551,42 @@ Clone or initialize another repository from this list.`.trim();
   window.addEventListener('resize', updateLayout);
   updateLayout();
 
-  $('#splitter').addEventListener('mousedown', e => {
-    e.preventDefault();
-    const vertical = document.body.classList.contains('layout-stack');
-    const start = vertical ? e.clientY : e.clientX;
-    const startSize = vertical ? S.detailsHeight : S.detailsWidth;
-    const onMove = ev => {
-      if (vertical) S.detailsHeight = Math.max(80, Math.min(window.innerHeight - 160, startSize - (ev.clientY - start)));
-      else S.detailsWidth = Math.max(240, Math.min(window.innerWidth - 460, startSize - (ev.clientX - start)));
-      applySizes();
+  $('#refsToggle').addEventListener('click', () => {
+    S.refsOpen = !S.refsOpen;
+    updateLayout();
+    persist();
+  });
+
+  const dragSplitter = (el, onDrag) =>
+    el.addEventListener('mousedown', e => {
+      e.preventDefault();
+      const vertical = isVertical();
+      const start = vertical ? e.clientY : e.clientX;
+      const done = onDrag(vertical);
+      const onMove = ev => {
+        done((vertical ? ev.clientY : ev.clientX) - start);
+        applySizes();
+      };
+      const onUp = () => {
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+        persist();
+      };
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    });
+  dragSplitter($('#splitter'), vertical => {
+    // start from the height actually shown (the narrow layout may clamp it)
+    const startSize = vertical ? parseFloat(rootStyle.getPropertyValue('--details-h')) || S.detailsHeight : S.detailsWidth;
+    return delta => {
+      // the details pane is below the graph when stacked, on top in the narrow layout
+      if (vertical) S.detailsHeight = Math.max(80, Math.min(window.innerHeight - 160, startSize + (isNarrow() ? delta : -delta)));
+      else S.detailsWidth = Math.max(240, Math.min(window.innerWidth - 460, startSize - delta));
     };
-    const onUp = () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-      persist();
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+  });
+  dragSplitter($('#sideSplitter'), () => {
+    const startSize = refsShown();
+    return delta => (S.refsHeight = Math.max(60, Math.min(window.innerHeight - 260, startSize + delta)));
   });
 
   fillIcons();
